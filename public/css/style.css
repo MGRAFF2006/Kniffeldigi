@@ -1234,3 +1234,362 @@ td.val.own-edit:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* ==========================================================================
+   ORIGINALER WERTUNGSBLOCK
+   Aufbau nach dem klassischen gedruckten Kniffel-/Yatzy-Block:
+   weißes Papier, kräftiges Tabellenraster, eigene Regelspalte und Spielspalten.
+   ========================================================================== */
+
+body {
+  background: #ededeb;
+}
+
+main {
+  max-width: 1040px;
+  padding: 34px 38px 54px;
+  background: #fff;
+  border: 0;
+  box-shadow: 0 7px 24px rgba(0, 0, 0, 0.12);
+}
+
+/* Der Titel entspricht der handschriftlichen Überschrift des Papierblocks. */
+.hero h1,
+.game-top h1 {
+  font-family: var(--font-hand);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-transform: none;
+}
+
+.hero h1 {
+  font-size: clamp(3.2rem, 7vw, 5rem);
+  line-height: 1;
+}
+
+.hero h1 span {
+  color: #555;
+}
+
+.form-number,
+.hero .tagline,
+.roll-label {
+  color: #333;
+}
+
+.game-top {
+  min-height: 74px;
+  border-bottom: 0;
+  align-items: flex-end;
+}
+
+.game-top h1 {
+  font-size: 3.25rem;
+  line-height: 1;
+}
+
+.game-top > div {
+  min-width: 280px;
+  justify-content: flex-end;
+}
+
+/* Der Code sitzt dort, wo auf dem Papierblock die Namenslinie liegt. */
+.codebadge {
+  min-width: 220px;
+  padding: 0 4px;
+  border: 0;
+  border-bottom: 2px solid var(--line);
+  line-height: 34px;
+}
+
+.codebadge .code {
+  margin-left: auto;
+  font-size: 1.65rem;
+}
+
+.statuspill,
+.statuspill.live,
+.statuspill.lobby,
+.statuspill.done {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--line);
+}
+
+/* Die Wertung erhält die volle Papierbreite; Spieler/Protokoll folgen darunter. */
+.game-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.side-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 34px;
+  margin-top: 28px;
+  border-top: 2px solid var(--line);
+  padding-top: 14px;
+}
+
+.section-title {
+  margin-top: 24px;
+  border: 0;
+  font-size: 0;
+  min-height: 0;
+}
+
+.section-title::after {
+  content: 'Wertungsblock';
+  display: block;
+  font: 800 0.72rem Arial, Helvetica, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 2px solid var(--line);
+  padding-bottom: 5px;
+}
+
+.score-wrap {
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+table.scoresheet {
+  width: 100%;
+  table-layout: fixed;
+  border: 2px solid var(--line);
+  background: #fff;
+}
+
+.scoresheet col.category-col {
+  width: 27%;
+}
+
+.scoresheet col.rule-col {
+  width: 18%;
+}
+
+.scoresheet th,
+.scoresheet td {
+  height: 42px;
+  padding: 4px 7px;
+  border: 1.25px solid #222;
+  background: #fff;
+  vertical-align: middle;
+}
+
+.scoresheet thead th {
+  height: 54px;
+  min-width: 72px;
+  background: #fff;
+  font-family: var(--font-ui);
+  color: var(--line);
+}
+
+.scoresheet thead th.sheet-corner {
+  text-align: left;
+  font-family: var(--font-hand);
+  font-size: 2rem;
+  font-weight: 700;
+  padding-left: 10px;
+}
+
+.scoresheet thead .game-number {
+  display: block;
+  font: 700 0.66rem var(--font-ui);
+  color: #333;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.scoresheet thead .player-name {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  font: 700 1.05rem var(--font-hand);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scoresheet th.me,
+.scoresheet col.turncol {
+  background: #f0f0ed;
+}
+
+.scoresheet .cat {
+  text-align: left;
+}
+
+.scoresheet .cat .catname {
+  display: inline-block;
+  font-size: 0.82rem;
+  line-height: 22px;
+}
+
+.scoresheet .rulenote {
+  color: #202020;
+  font-size: 0.69rem;
+  font-weight: 600;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.scoresheet .total-note {
+  font-size: 0.8rem;
+}
+
+.category-dice {
+  float: right;
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 6px;
+}
+
+.category-dice .die {
+  width: 23px;
+  height: 23px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #fff;
+  transform: none;
+  animation: none;
+}
+
+.category-dice .die .pip,
+.category-dice .die[data-face='1'] .pip,
+.category-dice .die[data-face='4'] .pip,
+.category-dice .die[data-face='5'] .pip {
+  width: 4px;
+  height: 4px;
+  background: var(--line);
+}
+
+.scoresheet td.val {
+  min-width: 72px;
+  font-size: 1.35rem;
+}
+
+.scoresheet tr.totals th,
+.scoresheet tr.totals td {
+  background: #f5f5f2;
+  font-weight: 800;
+}
+
+.scoresheet tr.grand th,
+.scoresheet tr.grand td {
+  border-top-width: 2px;
+  border-bottom-width: 2px;
+}
+
+/* Oberen und unteren Block optisch wie zwei gedruckte Tabellen trennen. */
+.scoresheet tbody tr.section:first-child {
+  display: none;
+}
+
+.scoresheet tr.section th {
+  height: 12px;
+  padding: 0;
+  border-right: 0;
+  border-left: 0;
+  background: #fff;
+  color: transparent;
+  font-size: 0;
+}
+
+.scoresheet td.val.pick.manual {
+  color: #777;
+}
+
+.scoresheet td.val.pick:hover,
+.scoresheet td.val.own-edit:hover {
+  background: #e9e9e5;
+}
+
+/* Dialog und übrige Formulare ebenfalls auf sauberem, unlininiertem Papier. */
+.modal {
+  background: #fff;
+}
+
+.field input[type='text'],
+.field input[type='password'],
+.entry-range input,
+.mode-card,
+.style-card {
+  background: #fff;
+}
+
+@media (max-width: 720px) {
+  main {
+    padding: 22px 8px 36px;
+  }
+
+  .game-top {
+    align-items: flex-start;
+  }
+
+  .game-top h1 {
+    font-size: 2.4rem;
+  }
+
+  .game-top > div {
+    min-width: 0;
+  }
+
+  .codebadge {
+    min-width: 150px;
+  }
+
+  .side-panel {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .scoresheet col.category-col {
+    width: 34%;
+  }
+
+  .scoresheet col.rule-col {
+    width: 22%;
+  }
+
+  .scoresheet th,
+  .scoresheet td {
+    height: 38px;
+    padding: 3px 4px;
+  }
+
+  .scoresheet .cat .catname {
+    font-size: 0.67rem;
+  }
+
+  .scoresheet .rulenote {
+    font-size: 0.56rem;
+  }
+
+  .category-dice {
+    gap: 1px;
+  }
+
+  .category-dice .die {
+    width: 17px;
+    height: 17px;
+    padding: 1px;
+  }
+
+  .category-dice .die .pip {
+    width: 3px;
+    height: 3px;
+  }
+
+  .scoresheet td.val {
+    min-width: 54px;
+    font-size: 1.1rem;
+  }
+
+  .scoresheet thead .game-number {
+    font-size: 0.52rem;
+  }
+
+  .scoresheet thead .player-name {
+    font-size: 0.85rem;
+  }
+}

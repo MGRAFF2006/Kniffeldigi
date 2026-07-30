@@ -25,10 +25,11 @@ Läuft auf **Cloudflare** (Worker + statische Assets + D1).
 - **Konten & Historie:** Registrierung/Login (PBKDF2-gehashte Passwörter). Ergebnisse eingeloggter
   Spieler werden protokolliert: Siege, Bestwerte, Durchschnitt, komplette Liste.
 - **Einstellungen:** Anzeigename & Passwort ändern, Tintenfarbe der „Handschrift“, Spielhistorie.
-- **Design:** reduziert wie ein klassischer schwarzweißer Spielblock: kompakte Tabellen, gerade
-  Formularfelder, zurückhaltende Graustufen und ein durchgehendes 28-Pixel-Grundlinienraster, an dem
-  Papierlinien und Schrift ausgerichtet sind. Die fünf Würfel auf dem Deckblatt lassen sich antippen
-  und rollen als kleine Spielerei.
+- **Design:** nach dem klassischen gedruckten Wertungsblock: sauberes weißes Papier, kräftiges
+  Tabellenraster, getrennte Spalten für Kategorie und Wertungsregel, kleine Würfelbilder bei Einsern
+  bis Sechsern sowie „Spiel 1“, „Spiel 2“ usw. über den handschriftlichen Spielernamen. Spieltitel und
+  Code/Name-Linie sitzen wie auf dem Originalbogen. Die fünf Würfel auf dem Deckblatt lassen sich
+  antippen und rollen als kleine Spielerei.
 
 ## Projektstruktur
 
