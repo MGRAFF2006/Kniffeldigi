@@ -16,6 +16,16 @@ const shot = (name) => page.screenshot({ path: `${OUT}/${name}.png`, fullPage: t
 
 // 1. Landing
 await page.goto(`${BASE}/#/`, { waitUntil: 'networkidle' });
+await page.click('#landing-dice');
+await page.waitForSelector('#landing-dice.is-rolling');
+await page.waitForTimeout(800);
+if (await page.locator('#landing-dice').evaluate((el) => el.classList.contains('is-rolling'))) {
+  throw new Error('Landing-Würfel stoppen nicht.');
+}
+const landingFaces = await page.locator('#landing-dice .die').evaluateAll((dice) => dice.map((d) => Number(d.dataset.face)));
+if (landingFaces.length !== 5 || landingFaces.some((face) => face < 1 || face > 6)) {
+  throw new Error(`Ungültige Landing-Würfel: ${landingFaces.join(',')}`);
+}
 await shot('01-landing');
 
 // 2. Analoges Spiel erstellen (Standard) → läuft sofort

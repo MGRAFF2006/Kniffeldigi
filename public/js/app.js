@@ -84,13 +84,13 @@ function viewLanding() {
   const name = defaultName();
   app.innerHTML = `
     <section class="hero">
-      <div class="hero-dice">
+      <button type="button" class="hero-dice" id="landing-dice" aria-label="Fünf Würfel rollen">
         ${[2, 6, 5, 3, 4].map((f) => dieHTML(f)).join('')}
-      </div>
-      <h1>Der digitale<br /><span class="stroke">Würfelblock</span></h1>
-      <p class="tagline">Ihr würfelt echt am Tisch – der <strong>Kniffel</strong>- oder <strong>Yatzy</strong>-Block wird digital geführt.
-      Jeder trägt seine Punkte selbst ein und alle sehen live, was den anderen noch fehlt. Auf Wunsch würfelt die App auch komplett digital.</p>
-      <span class="scribble">Nie wieder Zettel suchen und Summen verrechnen! ✎</span>
+        <span class="roll-label">antippen &amp; würfeln</span>
+      </button>
+      <p class="form-number">BLOCK 01 · DIGITALER SPIELBOGEN</p>
+      <h1>Kniffel <span>/</span> Yatzy</h1>
+      <p class="tagline">Echte Würfel. Ein gemeinsamer Block. Jeder trägt die eigene Wertung ein.</p>
     </section>
 
     <div class="landing-grid">
@@ -107,7 +107,7 @@ function viewLanding() {
           </div>
           <div class="btn-row">
             <button class="btn red big" id="btn-join">Mitspielen</button>
-            <button class="btn ghost" id="btn-watch">👁 Live zuschauen</button>
+            <button class="btn ghost" id="btn-watch">Live ansehen</button>
           </div>
           <p class="error-text" id="join-error"></p>
         </div>
@@ -136,11 +136,11 @@ function viewLanding() {
           </div>
           <div class="style-cards" role="radiogroup" aria-label="Spielart">
             <button type="button" class="style-card selected" data-entry="manual" role="radio" aria-checked="true">
-              <strong>🎲 Analog spielen, digital eintragen</strong>
+              <strong>Analog spielen / digital eintragen</strong>
               <span>Ihr würfelt echt – jeder führt seinen Bogen in der App und alle sehen live, was noch fehlt.</span>
             </button>
             <button type="button" class="style-card" data-entry="digital" role="radio" aria-checked="false">
-              <strong>📱 Komplett digital würfeln</strong>
+              <strong>Komplett digital würfeln</strong>
               <span>Die App würfelt rundenbasiert – für Spielrunden über Distanz.</span>
             </button>
           </div>
@@ -157,11 +157,31 @@ function viewLanding() {
     </div>
 
     <div class="features">
-      <div class="feature"><h3>📝 Ein Block für alle</h3><p>Jeder trägt am eigenen Handy ein. Summen, Bonus und Endstand rechnet der Block automatisch – und zeigt, welche Felder jedem noch fehlen.</p></div>
-      <div class="feature"><h3>📺 Live zuschauen</h3><p>Jedes Spiel hat einen Zuschauer-Link. Familie &amp; Freunde verfolgen den Spielbogen in Echtzeit – ganz ohne Anmeldung.</p></div>
-      <div class="feature"><h3>📒 Spiele protokollieren</h3><p>Mit einem kostenlosen Konto werden deine Ergebnisse gespeichert: Siege, Bestwerte und die komplette Historie.</p></div>
+      <div class="feature"><b>01</b><h3>Ein Block für alle</h3><p>Jeder führt die eigene Spalte. Summen und offene Felder bleiben für alle sichtbar.</p></div>
+      <div class="feature"><b>02</b><h3>Live-Ansicht</h3><p>Mit dem Spielcode kann die Runde ohne Anmeldung verfolgt werden.</p></div>
+      <div class="feature"><b>03</b><h3>Spielprotokoll</h3><p>Konten speichern Ergebnisse, Siege und persönliche Bestwerte.</p></div>
     </div>
   `;
+
+  const landingDice = document.getElementById('landing-dice');
+  let diceRolling = false;
+  landingDice.addEventListener('click', () => {
+    if (diceRolling) return;
+    diceRolling = true;
+    landingDice.classList.add('is-rolling');
+    let frames = 0;
+    const timer = setInterval(() => {
+      landingDice.querySelectorAll('.die').forEach((die) => {
+        const face = Math.floor(Math.random() * 6) + 1;
+        die.outerHTML = dieHTML(face);
+      });
+      if (++frames >= 8) {
+        clearInterval(timer);
+        landingDice.classList.remove('is-rolling');
+        diceRolling = false;
+      }
+    }, 75);
+  });
 
   const codeInput = document.getElementById('join-code');
   codeInput.addEventListener('input', () => (codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '')));
