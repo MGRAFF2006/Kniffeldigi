@@ -332,6 +332,13 @@ function sheetRowsFor(mode) {
   return rows;
 }
 
+function categoryDice(mode, cat) {
+  const index = MODES[mode].upper.indexOf(cat);
+  if (index < 0) return '';
+  const face = index + 1;
+  return `<span class="category-dice" aria-hidden="true">${[0, 1, 2].map(() => dieHTML(face)).join('')}</span>`;
+}
+
 function renderScoresheet(state, { digitalPick = false, manualPick = false } = {}) {
   const mode = state.mode;
   const labels = LABELS[mode];
@@ -340,18 +347,18 @@ function renderScoresheet(state, { digitalPick = false, manualPick = false } = {
   const dice = state.turn ? state.turn.dice : null;
   const me = state.you;
 
-  const colgroup = `<colgroup><col />${state.players
+  const colgroup = `<colgroup><col class="category-col" /><col class="rule-col" />${state.players
     .map((_, i) => `<col ${i === turnIndex && state.status === 'playing' ? 'class="turncol"' : ''} />`)
     .join('')}</colgroup>`;
 
   const header = `<thead><tr>
-    <th class="catcol">Feld</th>
-    ${state.players.map((p, i) => `<th class="${i === me ? 'me' : ''}" title="${esc(p.name)}">${esc(p.name)}${i === me ? ' (du)' : ''}</th>`).join('')}
+    <th class="sheet-corner" colspan="2">${state.modeName}-Block</th>
+    ${state.players.map((p, i) => `<th class="${i === me ? 'me' : ''}" title="${esc(p.name)}"><span class="game-number">Spiel ${i + 1}</span><span class="player-name">${esc(p.name)}${i === me ? ' (du)' : ''}</span></th>`).join('')}
   </tr></thead>`;
 
   const bodyRows = rows.map((row) => {
     if (row.type === 'section') {
-      return `<tr class="section"><th colspan="${state.players.length + 1}">${row.label}</th></tr>`;
+      return `<tr class="section"><th colspan="${state.players.length + 2}">${row.label}</th></tr>`;
     }
     if (row.type === 'calc') {
       const cells = state.players
@@ -369,7 +376,13 @@ function renderScoresheet(state, { digitalPick = false, manualPick = false } = {
           return `<td class="val">${p.totals[row.key]}${bonusBtn}</td>`;
         })
         .join('');
-      return `<tr class="totals${row.grand ? ' grand' : ''}"><th class="cat"><span class="catname">${row.label}</span></th>${cells}</tr>`;
+      const note =
+        row.key === 'bonus'
+          ? `plus ${MODES[mode].upperBonus.points}`
+          : row.key === 'extraBonus'
+            ? '+50 je Extra'
+            : '→';
+      return `<tr class="totals${row.grand ? ' grand' : ''}"><th class="cat"><span class="catname">${row.label}</span></th><td class="rulenote total-note">${note}</td>${cells}</tr>`;
     }
     // Kategorie-Zeile
     const [catName, catHint] = labels[row.cat];
@@ -394,7 +407,7 @@ function renderScoresheet(state, { digitalPick = false, manualPick = false } = {
         return `<td class="val"></td>`;
       })
       .join('');
-    return `<tr><th class="cat"><span class="catname">${catName}</span><span class="cathint">${catHint}</span></th>${cells}</tr>`;
+    return `<tr><th class="cat"><span class="catname">${catName}</span>${categoryDice(mode, row.cat)}</th><td class="rulenote">${catHint}</td>${cells}</tr>`;
   });
 
   return `<div class="score-wrap"><table class="scoresheet">${colgroup}${header}<tbody>${bodyRows.join('')}</tbody></table></div>`;
