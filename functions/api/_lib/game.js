@@ -9,29 +9,35 @@ import {
   scoreCategory,
   sheetComplete,
   totals,
+  validManualScore,
 } from './rules.js';
 import { normalizeCode, randomDie, randomGameCode, randomToken } from './util.js';
 
 export const MAX_PLAYERS = 8;
 export const MAX_ROLLS = 3;
 
-export function newGameState(mode) {
+export function newGameState(mode, entry = 'manual') {
+  const manual = entry === 'manual';
   return {
     mode,
-    status: 'lobby', // lobby | playing | finished
+    // 'manual' = analog spielen, Punkte digital eintragen; 'digital' = komplett digital würfeln
+    entry: manual ? 'manual' : 'digital',
+    // Analogspiele laufen sofort – Mitspieler können jederzeit dazukommen.
+    status: manual ? 'playing' : 'lobby', // lobby | playing | finished
     players: [], // { token, name, userId, scores, extraYahtzees }
-    turn: null, // { player, rolls, dice[5], held[5] }
+    turn: null, // nur digital: { player, rolls, dice[5], held[5] }
     round: 0,
     results: null,
     log: [],
     createdAt: Date.now(),
-    startedAt: null,
+    startedAt: manual ? Date.now() : null,
     finishedAt: null,
   };
 }
 
 export function addPlayer(state, name, userId) {
-  if (state.status !== 'lobby') throw new GameError('Das Spiel läuft bereits.');
+  const joinable = state.status === 'lobby' || (state.entry === 'manual' && state.status === 'playing');
+  if (!joinable) throw new GameError(state.status === 'finished' ? 'Das Spiel ist schon beendet.' : 'Das Spiel läuft bereits.');
   if (state.players.length >= MAX_PLAYERS) throw new GameError('Das Spiel ist voll (max. 8 Spieler).');
   if (state.players.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
     throw new GameError('Dieser Name ist in diesem Spiel schon vergeben.');
@@ -63,9 +69,16 @@ function requirePlayer(state, token) {
 
 function requireCurrentPlayer(state, token) {
   const index = requirePlayer(state, token);
+  if (state.entry !== 'digital') throw new GameError('In diesem Spiel wird analog gewürfelt – trage deine Punkte direkt ein.');
   if (state.status !== 'playing') throw new GameError('Das Spiel läuft gerade nicht.');
   if (state.turn.player !== index) throw new GameError('Du bist nicht an der Reihe.');
   return index;
+}
+
+/** Analogspiel beenden, sobald alle Bögen voll sind. */
+function maybeFinishManual(state) {
+  if (state.status !== 'playing' || state.players.length === 0) return;
+  if (state.players.every((p) => sheetComplete(state.mode, p.scores))) finishGame(state);
 }
 
 function freshTurn(playerIndex) {
@@ -76,6 +89,7 @@ export function applyAction(state, token, action) {
   switch (action.type) {
     case 'start': {
       const index = requirePlayer(state, token);
+      if (state.entry !== 'digital') throw new GameError('Analogspiele laufen sofort – kein Start nötig.');
       if (index !== 0) throw new GameError('Nur wer das Spiel erstellt hat, kann es starten.');
       if (state.status !== 'lobby') throw new GameError('Das Spiel läuft bereits.');
       if (state.players.length < 1) throw new GameError('Es ist noch niemand beigetreten.');
@@ -89,9 +103,47 @@ export function applyAction(state, token, action) {
 
     case 'leave': {
       const index = requirePlayer(state, token);
-      if (state.status !== 'lobby') throw new GameError('Während des Spiels kann man nicht austreten.');
+      const canLeave = state.status === 'lobby' || (state.entry === 'manual' && state.status === 'playing');
+      if (!canLeave) throw new GameError('Während des Spiels kann man nicht austreten.');
       const [player] = state.players.splice(index, 1);
       pushLog(state, `${player.name} hat das Spiel verlassen.`);
+      if (state.entry === 'manual') maybeFinishManual(state);
+      return;
+    }
+
+    // --- Analogmodus: Ergebnis eines echten Wurfs eintragen ---
+    case 'enter': {
+      const index = requirePlayer(state, token);
+      if (state.entry !== 'manual') throw new GameError('In diesem Spiel wird digital gewürfelt.');
+      if (state.status !== 'playing') throw new GameError('Das Spiel läuft gerade nicht.');
+      const cat = String(action.category);
+      if (!allCategories(state.mode).includes(cat)) throw new GameError('Unbekanntes Feld.');
+      const player = state.players[index];
+      if (player.scores[cat] !== null) throw new GameError('Dieses Feld ist schon ausgefüllt.');
+      const value = Number(action.value);
+      if (!validManualScore(state.mode, cat, value)) {
+        throw new GameError(`${value} ist bei „${CAT_NAMES[state.mode][cat]}“ nicht möglich.`);
+      }
+      player.scores[cat] = value;
+      pushLog(
+        state,
+        value === 0
+          ? `${player.name} streicht „${CAT_NAMES[state.mode][cat]}“.`
+          : `${player.name} trägt ${value} Punkte bei „${CAT_NAMES[state.mode][cat]}“ ein.`
+      );
+      maybeFinishManual(state);
+      return;
+    }
+
+    // --- Analogmodus (nur Kniffel): weiteren Kniffel als +50-Bonus verbuchen ---
+    case 'extraBonus': {
+      const index = requirePlayer(state, token);
+      if (state.entry !== 'manual' || state.mode !== 'kniffel') throw new GameError('Der Kniffel-Bonus ist hier nicht verfügbar.');
+      if (state.status !== 'playing') throw new GameError('Das Spiel läuft gerade nicht.');
+      const player = state.players[index];
+      if (player.scores.kniffel !== 50) throw new GameError('Erst mit einem eingetragenen Kniffel (50) gibt es Bonuspunkte.');
+      player.extraYahtzees++;
+      pushLog(state, `${player.name} würfelt einen weiteren Kniffel! +50 Bonuspunkte.`);
       return;
     }
 
@@ -188,6 +240,7 @@ export function publicState(state, requesterToken) {
   return {
     mode: state.mode,
     modeName: MODES[state.mode].name,
+    entry: state.entry || 'digital',
     status: state.status,
     round: state.round,
     turn: state.turn,
@@ -217,8 +270,8 @@ export async function loadGame(env, code) {
   return { code: row.code, version: row.version, state: JSON.parse(row.state) };
 }
 
-export async function createGame(env, mode) {
-  const state = newGameState(mode);
+export async function createGame(env, mode, entry) {
+  const state = newGameState(mode, entry);
   // Bei Kollision des Codes einfach neu versuchen.
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = randomGameCode();

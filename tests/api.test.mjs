@@ -39,8 +39,8 @@ assert.equal(res.data.user.displayName, 'Testerin', 'me liefert Profil');
 res = await call('POST', '/auth/login', { body: { username: `tester_${stamp}`, password: 'falsch123' } });
 assert.equal(res.status, 401, 'Falsches Passwort abgelehnt');
 
-// --- Spiel anlegen (eingeloggt) + zweiter Spieler (anonym) ---
-res = await call('POST', '/games', { body: { mode: 'yatzy' }, session });
+// --- Digitales Spiel anlegen (eingeloggt) + zweiter Spieler (anonym) ---
+res = await call('POST', '/games', { body: { mode: 'yatzy', entry: 'digital' }, session });
 assert.equal(res.status, 201, `Spiel anlegen: ${JSON.stringify(res.data)}`);
 const code = res.data.code;
 const hostToken = res.data.playerToken;
@@ -132,9 +132,71 @@ assert.equal(res.data.games[0].game_code, code);
 assert.equal(res.data.stats[0].mode, 'yatzy');
 
 // --- Kniffel-Modus kurz gegenprüfen (13 Felder) ---
-res = await call('POST', '/games', { body: { mode: 'kniffel', name: 'Solo' } });
+res = await call('POST', '/games', { body: { mode: 'kniffel', name: 'Solo', entry: 'digital' } });
 assert.equal(res.status, 201);
 assert.equal(Object.keys(res.data.state.players[0].scores).length, 13, 'Kniffel-Bogen: 13 Felder');
+
+// ===== Analogmodus (Hauptnutzung): analog würfeln, digital eintragen =====
+
+res = await call('POST', '/games', { body: { mode: 'kniffel', name: 'Melanie' } });
+assert.equal(res.status, 201, 'Analogspiel anlegen');
+const mCode = res.data.code;
+const mHost = res.data.playerToken;
+assert.equal(res.data.state.entry, 'manual', 'Standard ist Analogmodus');
+assert.equal(res.data.state.status, 'playing', 'Analogspiel läuft sofort');
+
+// Beitritt jederzeit möglich (kein Lobby-Zwang).
+res = await call('POST', `/games/${mCode}/join`, { body: { name: 'Peter' } });
+assert.equal(res.status, 200, 'Beitritt ins laufende Analogspiel');
+const mGuest = res.data.playerToken;
+
+// Digitale Aktionen sind gesperrt.
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'roll' }, playerToken: mHost });
+assert.equal(res.status, 400, 'Analog: Würfeln gesperrt');
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'start' }, playerToken: mHost });
+assert.equal(res.status, 400, 'Analog: kein Start nötig');
+
+// Unmögliche Werte werden abgelehnt.
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'enter', category: 'ones', value: 7 }, playerToken: mHost });
+assert.equal(res.status, 400, 'Analog: 7 Einser unmöglich');
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'enter', category: 'fullHouse', value: 24 }, playerToken: mHost });
+assert.equal(res.status, 400, 'Analog: Full House 24 unmöglich');
+
+// Gültige Einträge, ohne Zugreihenfolge – auch der Gast darf sofort.
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'enter', category: 'ones', value: 3 }, playerToken: mHost });
+assert.equal(res.status, 200, 'Analog: Eintrag ok');
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'enter', category: 'chance', value: 23 }, playerToken: mGuest });
+assert.equal(res.status, 200, 'Analog: Gast trägt ohne Reihenfolge ein');
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'enter', category: 'ones', value: 2 }, playerToken: mHost });
+assert.equal(res.status, 400, 'Analog: Feld schon ausgefüllt');
+
+// Kniffel-Bonus erst nach eingetragenem Kniffel (50).
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'extraBonus' }, playerToken: mHost });
+assert.equal(res.status, 400, 'Analog: Bonus ohne Kniffel gesperrt');
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'enter', category: 'kniffel', value: 50 }, playerToken: mHost });
+assert.equal(res.status, 200);
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'extraBonus' }, playerToken: mHost });
+assert.equal(res.status, 200, 'Analog: Bonus nach Kniffel ok');
+assert.equal(res.data.state.players[0].totals.extraBonus, 50, 'Analog: +50 verbucht');
+
+// Beide Bögen komplett füllen → Spiel endet automatisch.
+const kniffelCats = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes', 'threeKind', 'fourKind', 'fullHouse', 'smallStraight', 'largeStraight', 'kniffel', 'chance'];
+let mState = res.data.state;
+for (const [playerIndex, token] of [[0, mHost], [1, mGuest]].map((x) => x)) {
+  for (const cat of kniffelCats) {
+    if (mState.players[playerIndex].scores[cat] !== null) continue;
+    const r = await call('POST', `/games/${mCode}/action`, { body: { type: 'enter', category: cat, value: 0 }, playerToken: token });
+    assert.equal(r.status, 200, `Analog: ${cat} streichen (${JSON.stringify(r.data)})`);
+    mState = r.data.state;
+  }
+}
+assert.equal(mState.status, 'finished', 'Analogspiel automatisch beendet');
+assert.equal(mState.results.length, 2, 'Analog: Ergebnisliste');
+assert.equal(mState.results[0].name, 'Melanie', 'Analog: Melanie gewinnt (53+35+50... > 23)');
+
+// Nach Spielende kein Beitritt mehr.
+res = await call('POST', `/games/${mCode}/join`, { body: { name: 'Spät' } });
+assert.equal(res.status, 400, 'Analog: kein Beitritt nach Spielende');
 
 // --- Einstellungen: Name & Passwort ändern ---
 res = await call('PATCH', '/auth/me', { body: { displayName: 'Neuer Name' }, session });

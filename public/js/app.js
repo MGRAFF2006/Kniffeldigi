@@ -1,7 +1,7 @@
 // Würfelblock – SPA mit Hash-Routing.
 
 import { api, getSession, getStoredUser, playerTokenFor, setPlayerToken, setSession } from './api.js';
-import { LABELS, MODES, jokerApplies, scoreCategory } from './rules.js';
+import { LABELS, MODES, allCategories, jokerApplies, manualScoreOptions, scoreCategory } from './rules.js';
 
 const app = document.getElementById('app');
 const topnav = document.getElementById('topnav');
@@ -88,9 +88,9 @@ function viewLanding() {
         ${[2, 6, 5, 3, 4].map((f) => dieHTML(f)).join('')}
       </div>
       <h1>Der digitale<br /><span class="stroke">Würfelblock</span></h1>
-      <p class="tagline"><strong>Kniffel</strong> und <strong>Yatzy</strong> mit Freunden spielen – egal wo ihr seid.
-      Spiel erstellen, Code teilen, loswürfeln. Wer nicht mitspielt, schaut live zu.</p>
-      <span class="scribble">Kein Download, kein Schnickschnack – einfach würfeln! ✎</span>
+      <p class="tagline">Ihr würfelt echt am Tisch – der <strong>Kniffel</strong>- oder <strong>Yatzy</strong>-Block wird digital geführt.
+      Jeder trägt seine Punkte selbst ein und alle sehen live, was den anderen noch fehlt. Auf Wunsch würfelt die App auch komplett digital.</p>
+      <span class="scribble">Nie wieder Zettel suchen und Summen verrechnen! ✎</span>
     </section>
 
     <div class="landing-grid">
@@ -134,6 +134,16 @@ function viewLanding() {
               </ul>
             </button>
           </div>
+          <div class="style-cards" role="radiogroup" aria-label="Spielart">
+            <button type="button" class="style-card selected" data-entry="manual" role="radio" aria-checked="true">
+              <strong>🎲 Analog spielen, digital eintragen</strong>
+              <span>Ihr würfelt echt – jeder führt seinen Bogen in der App und alle sehen live, was noch fehlt.</span>
+            </button>
+            <button type="button" class="style-card" data-entry="digital" role="radio" aria-checked="false">
+              <strong>📱 Komplett digital würfeln</strong>
+              <span>Die App würfelt rundenbasiert – für Spielrunden über Distanz.</span>
+            </button>
+          </div>
           <div class="name-line">
             <label for="create-name">Dein Name:</label>
             <input id="create-name" class="hand-input" maxlength="20" placeholder="z. B. Peter" value="${esc(name)}" />
@@ -147,9 +157,9 @@ function viewLanding() {
     </div>
 
     <div class="features">
+      <div class="feature"><h3>📝 Ein Block für alle</h3><p>Jeder trägt am eigenen Handy ein. Summen, Bonus und Endstand rechnet der Block automatisch – und zeigt, welche Felder jedem noch fehlen.</p></div>
       <div class="feature"><h3>📺 Live zuschauen</h3><p>Jedes Spiel hat einen Zuschauer-Link. Familie &amp; Freunde verfolgen den Spielbogen in Echtzeit – ganz ohne Anmeldung.</p></div>
       <div class="feature"><h3>📒 Spiele protokollieren</h3><p>Mit einem kostenlosen Konto werden deine Ergebnisse gespeichert: Siege, Bestwerte und die komplette Historie.</p></div>
-      <div class="feature"><h3>🎲 Zwei echte Blöcke</h3><p>Kniffel und Yatzy mit ihren originalen, unterschiedlichen Spielbögen und Wertungsregeln.</p></div>
     </div>
   `;
 
@@ -164,6 +174,17 @@ function viewLanding() {
         c.setAttribute('aria-checked', c === card ? 'true' : 'false');
       });
       selectedMode = card.dataset.mode;
+    });
+  });
+
+  let selectedEntry = 'manual';
+  app.querySelectorAll('.style-card').forEach((card) => {
+    card.addEventListener('click', () => {
+      app.querySelectorAll('.style-card').forEach((c) => {
+        c.classList.toggle('selected', c === card);
+        c.setAttribute('aria-checked', c === card ? 'true' : 'false');
+      });
+      selectedEntry = card.dataset.entry;
     });
   });
 
@@ -205,7 +226,7 @@ function viewLanding() {
     if (playerName.length < 2) { errEl.textContent = 'Bitte gib deinen Namen ein (mind. 2 Zeichen).'; return; }
     try {
       rememberName(playerName);
-      const data = await api.createGame(selectedMode, playerName);
+      const data = await api.createGame(selectedMode, playerName, selectedEntry);
       setPlayerToken(data.code, data.playerToken);
       location.hash = `#/game/${data.code}`;
     } catch (err) {
@@ -291,7 +312,7 @@ function sheetRowsFor(mode) {
   return rows;
 }
 
-function renderScoresheet(state, canPick) {
+function renderScoresheet(state, { digitalPick = false, manualPick = false } = {}) {
   const mode = state.mode;
   const labels = LABELS[mode];
   const rows = sheetRowsFor(mode);
@@ -314,7 +335,14 @@ function renderScoresheet(state, canPick) {
     }
     if (row.type === 'calc') {
       const cells = state.players
-        .map((p) => `<td class="val">${p.totals[row.key]}</td>`)
+        .map((p, i) => {
+          // Analogmodus, Kniffel: weiteren Kniffel als Bonus verbuchen können.
+          const bonusBtn =
+            row.key === 'extraBonus' && manualPick && i === me && p.scores.kniffel === 50
+              ? ' <button type="button" class="bonus-btn" id="btn-extrabonus" title="Noch ein Kniffel gewürfelt? +50 Bonuspunkte">+50</button>'
+              : '';
+          return `<td class="val">${p.totals[row.key]}${bonusBtn}</td>`;
+        })
         .join('');
       return `<tr class="totals${row.grand ? ' grand' : ''}"><th class="cat"><span class="catname">${row.label}</span></th>${cells}</tr>`;
     }
@@ -326,10 +354,13 @@ function renderScoresheet(state, canPick) {
         if (typeof score === 'number') {
           return `<td class="val${score === 0 ? ' zero' : ''}">${score === 0 ? '<span class="strike">0</span>' : score}</td>`;
         }
-        if (canPick && i === me && dice) {
+        if (digitalPick && i === me && dice) {
           const joker = jokerApplies(mode, dice, state.players[me].scores);
           const preview = scoreCategory(mode, row.cat, dice, joker);
           return `<td class="val pick" data-cat="${row.cat}" role="button" tabindex="0" title="Hier eintragen: ${preview} Punkte">${preview}</td>`;
+        }
+        if (manualPick && i === me) {
+          return `<td class="val pick manual" data-cat="${row.cat}" role="button" tabindex="0" title="${catName} eintragen">✎</td>`;
         }
         return `<td class="val"></td>`;
       })
@@ -340,14 +371,21 @@ function renderScoresheet(state, canPick) {
   return `<div class="score-wrap"><table class="scoresheet">${colgroup}${header}<tbody>${bodyRows.join('')}</tbody></table></div>`;
 }
 
+function filledCount(player) {
+  return Object.values(player.scores).filter((v) => typeof v === 'number').length;
+}
+
 function renderGame(state) {
   if (!currentGame) return;
   const { code, spectator } = currentGame;
   const me = state.you;
   const isPlayer = !spectator && me !== null;
+  const manual = state.entry === 'manual';
   const turn = state.turn;
-  const myTurn = isPlayer && state.status === 'playing' && turn && turn.player === me;
+  const myTurn = !manual && isPlayer && state.status === 'playing' && turn && turn.player === me;
   const canPick = myTurn && turn.rolls > 0;
+  const manualPick = manual && isPlayer && state.status === 'playing';
+  const totalCats = allCategories(state.mode).length;
 
   const statusPill =
     state.status === 'lobby'
@@ -356,9 +394,29 @@ function renderGame(state) {
         ? '<span class="statuspill live">● Live</span>'
         : '<span class="statuspill done">Beendet</span>';
 
-  // --- Würfelbereich ---
+  // --- Würfelbereich / Analog-Panel ---
   let trayHTML = '';
-  if (state.status === 'playing' && turn) {
+  if (manual && state.status === 'playing') {
+    const myMissing = isPlayer ? totalCats - filledCount(state.players[me]) : null;
+    const info = !isPlayer
+      ? '<p class="tray-info">Hier wird analog gewürfelt – die Spieler tragen ihre Punkte selbst ein.</p>'
+      : myMissing === 0
+        ? '<p class="tray-info">✔ Dein Bogen ist voll! Warte, bis die anderen fertig sind.</p>'
+        : `<p class="tray-info">Würfle am Tisch und trage dein Ergebnis über die <strong>✎-Felder</strong> in deiner Spalte ein.<br />
+           Dir ${myMissing === 1 ? 'fehlt noch <strong>1 Feld</strong>' : `fehlen noch <strong>${myMissing} von ${totalCats} Feldern`}</strong>.</p>`;
+    trayHTML = `
+      <section class="sheet">
+        <div class="sheet-head"><h2>Analoger Würfelabend</h2><span class="sub">${state.modeName}-Block · Mitspieler können jederzeit dazukommen</span></div>
+        <div class="sheet-body">
+          ${info}
+          <div class="btn-row" style="justify-content:center">
+            <button class="btn ghost small" id="btn-copycode">Code kopieren</button>
+            <button class="btn ghost small" id="btn-copylink">Einladungslink kopieren</button>
+            <button class="btn ghost small" id="btn-copywatch">Zuschauer-Link kopieren</button>
+          </div>
+        </div>
+      </section>`;
+  } else if (state.status === 'playing' && turn) {
     const current = state.players[turn.player];
     const rolled = turn.rolls > 0;
     const diceHTML = turn.dice
@@ -440,6 +498,10 @@ function renderGame(state) {
       const tags = [];
       if (i === 0) tags.push('<span class="tag">Host</span>');
       if (state.status === 'playing' && turn && turn.player === i) tags.push('<span class="tag turn">am Zug</span>');
+      if (manual && state.status !== 'lobby') {
+        const filled = filledCount(p);
+        tags.push(`<span class="tag${filled === totalCats ? ' turn' : ''}" title="Ausgefüllte Felder">${filled}/${totalCats}</span>`);
+      }
       if (p.hasAccount) tags.push('<span class="tag" title="Ergebnis wird im Konto gespeichert">📒</span>');
       return `<li><span class="pname">${esc(p.name)}${i === me ? ' (du)' : ''}</span>${tags.join('')}</li>`;
     })
@@ -462,7 +524,7 @@ function renderGame(state) {
       <div>
         ${trayHTML}
         <h2 class="section-title">Spielbogen</h2>
-        ${renderScoresheet(state, canPick)}
+        ${renderScoresheet(state, { digitalPick: canPick, manualPick })}
       </div>
       <aside class="side-panel">
         <section class="sheet">
@@ -505,10 +567,80 @@ function renderGame(state) {
   });
 
   app.querySelectorAll('td.val.pick').forEach((el) => {
-    const pick = () => doAction({ type: 'score', category: el.dataset.cat });
+    const pick = el.classList.contains('manual')
+      ? () => openEntryModal(state, el.dataset.cat)
+      : () => doAction({ type: 'score', category: el.dataset.cat });
     el.addEventListener('click', pick);
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
   });
+
+  const bonusBtn = document.getElementById('btn-extrabonus');
+  if (bonusBtn) bonusBtn.addEventListener('click', () => {
+    if (confirm('Weiteren Kniffel gewürfelt? +50 Bonuspunkte werden verbucht.')) doAction({ type: 'extraBonus' });
+  });
+}
+
+// ===== Analogmodus: Eingabe-Dialog =====
+
+function closeEntryModal() {
+  const el = document.getElementById('entry-modal');
+  if (el) el.remove();
+}
+
+function openEntryModal(state, cat) {
+  closeEntryModal();
+  const [catName, catHint] = LABELS[state.mode][cat];
+  const options = manualScoreOptions(state.mode, cat);
+  const values = options.choices || options.set;
+
+  const body = values
+    ? `<div class="chip-grid">
+         ${values
+           .map((v) => `<button type="button" class="chip${v === 0 ? ' strike-chip' : ''}" data-value="${v}">${v === 0 ? 'Streichen (–)' : v}</button>`)
+           .join('')}
+       </div>`
+    : `<div class="entry-range">
+         <input type="number" id="entry-value" min="${options.range[0]}" max="${options.range[1]}" step="1"
+           placeholder="${options.range[0]}–${options.range[1]}" inputmode="numeric" />
+         <button type="button" class="btn small" id="entry-submit">Eintragen</button>
+         <button type="button" class="chip strike-chip" data-value="0">Streichen (–)</button>
+       </div>`;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'entry-modal';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal sheet" role="dialog" aria-modal="true" aria-label="${esc(catName)} eintragen">
+      <div class="sheet-head"><h2>${esc(catName)}</h2><span class="sub">${esc(catHint)}</span></div>
+      <div class="sheet-body">
+        <p class="muted" style="margin-top:0">Was hast du gewürfelt? Punkte auswählen:</p>
+        ${body}
+        <div class="btn-row"><button type="button" class="btn ghost small" id="entry-cancel">Abbrechen</button></div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const submit = (value) => {
+    closeEntryModal();
+    doAction({ type: 'enter', category: cat, value });
+  };
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeEntryModal(); });
+  overlay.querySelector('#entry-cancel').addEventListener('click', closeEntryModal);
+  overlay.querySelectorAll('.chip').forEach((chip) => chip.addEventListener('click', () => submit(Number(chip.dataset.value))));
+  const input = overlay.querySelector('#entry-value');
+  if (input) {
+    const submitRange = () => {
+      const value = Number(input.value);
+      if (!Number.isInteger(value) || value < options.range[0] || value > options.range[1]) {
+        toast(`Bitte einen Wert zwischen ${options.range[0]} und ${options.range[1]} eingeben (oder streichen).`, true);
+        return;
+      }
+      submit(value);
+    };
+    overlay.querySelector('#entry-submit').addEventListener('click', submitRange);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitRange(); });
+    input.focus();
+  }
 }
 
 // ===== Auth =====

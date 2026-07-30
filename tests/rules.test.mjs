@@ -75,6 +75,40 @@ passed += 3;
 eq(server.allCategories('kniffel').length, 13, 'Kniffel: 13 Felder');
 eq(server.allCategories('yatzy').length, 15, 'Yatzy: 15 Felder');
 
+// --- Analogmodus: manuelle Werte-Validierung ---
+const v = server.validManualScore;
+eq(v('kniffel', 'ones', 3), true, 'Manuell: 3 Einser ok');
+eq(v('kniffel', 'ones', 7), false, 'Manuell: 7 Einser unmöglich');
+eq(v('kniffel', 'twos', 5), false, 'Manuell: Zweier nur Vielfache von 2');
+eq(v('kniffel', 'fullHouse', 25), true, 'Manuell: Full House 25');
+eq(v('kniffel', 'fullHouse', 20), false, 'Manuell: Full House nur 0/25');
+eq(v('kniffel', 'threeKind', 17), true, 'Manuell: Dreierpasch Summe ok');
+eq(v('kniffel', 'threeKind', 31), false, 'Manuell: Dreierpasch max 30');
+eq(v('kniffel', 'kniffel', 50), true, 'Manuell: Kniffel 50');
+eq(v('kniffel', 'chance', 0), true, 'Manuell: Streichen immer erlaubt');
+eq(v('yatzy', 'onePair', 12), true, 'Manuell: Yatzy Paar 12');
+eq(v('yatzy', 'onePair', 11), false, 'Manuell: Yatzy Paar nur gerade');
+eq(v('yatzy', 'twoPairs', 22), true, 'Manuell: Yatzy zwei Paare max');
+eq(v('yatzy', 'threeKind', 10), false, 'Manuell: Yatzy Drilling nur Vielfache von 3');
+eq(v('yatzy', 'fullHouse', 7), true, 'Manuell: Yatzy Full House min 7');
+eq(v('yatzy', 'fullHouse', 6), false, 'Manuell: Yatzy Full House 6 unmöglich');
+eq(v('yatzy', 'largeStraight', 20), true, 'Manuell: Yatzy große Straße 20');
+eq(v('yatzy', 'largeStraight', 15), false, 'Manuell: Yatzy große Straße nur 0/20');
+
+// Client-Kopie der manuellen Validierung muss identisch sein.
+for (const mode of ['kniffel', 'yatzy']) {
+  for (const cat of server.allCategories(mode)) {
+    for (let val = 0; val <= 55; val++) {
+      assert.equal(
+        server.validManualScore(mode, cat, val),
+        client.validManualScore(mode, cat, val),
+        `Client/Server-Abweichung bei validManualScore: ${mode}/${cat}/${val}`
+      );
+    }
+  }
+}
+passed++;
+
 // --- Client-Kopie muss identisch werten ---
 let random = 42;
 const nextDie = () => {

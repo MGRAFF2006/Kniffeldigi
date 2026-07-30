@@ -168,3 +168,59 @@ export function emptyScores(mode) {
   for (const cat of allCategories(mode)) scores[cat] = null;
   return scores;
 }
+
+// ===== Analogmodus: manuelle Punkteingabe =====
+// Liefert, welche Werte in einem Feld überhaupt möglich sind
+// (für die Eingabe-UI und die serverseitige Validierung).
+// 0 ist immer erlaubt (= Feld streichen).
+
+function rangeChoices(from, to, step) {
+  const out = [0];
+  for (let v = from; v <= to; v += step) out.push(v);
+  return out;
+}
+
+export function manualScoreOptions(mode, cat) {
+  const upperIndex = MODES[mode].upper.indexOf(cat);
+  if (upperIndex >= 0) {
+    const face = upperIndex + 1;
+    return { choices: rangeChoices(face, face * 5, face) };
+  }
+  if (mode === 'kniffel') {
+    switch (cat) {
+      case 'threeKind':
+      case 'fourKind': return { range: [5, 30] };
+      case 'fullHouse': return { choices: [0, 25] };
+      case 'smallStraight': return { choices: [0, 30] };
+      case 'largeStraight': return { choices: [0, 40] };
+      case 'kniffel': return { choices: [0, 50] };
+      case 'chance': return { range: [5, 30] };
+    }
+  } else {
+    switch (cat) {
+      case 'onePair': return { choices: rangeChoices(2, 12, 2) };
+      case 'twoPairs': return { choices: rangeChoices(6, 22, 2) };
+      case 'threeKind': return { choices: rangeChoices(3, 18, 3) };
+      case 'fourKind': return { choices: rangeChoices(4, 24, 4) };
+      case 'smallStraight': return { choices: [0, 15] };
+      case 'largeStraight': return { choices: [0, 20] };
+      case 'fullHouse': {
+        const set = new Set([0]);
+        for (let a = 1; a <= 6; a++) for (let b = 1; b <= 6; b++) if (a !== b) set.add(a * 3 + b * 2);
+        return { set: [...set].sort((x, y) => x - y) };
+      }
+      case 'chance': return { range: [5, 30] };
+      case 'yatzy': return { choices: [0, 50] };
+    }
+  }
+  throw new Error(`Unbekannte Kategorie: ${cat}`);
+}
+
+export function validManualScore(mode, cat, value) {
+  if (!Number.isInteger(value) || value < 0) return false;
+  if (value === 0) return true;
+  const options = manualScoreOptions(mode, cat);
+  if (options.choices) return options.choices.includes(value);
+  if (options.set) return options.set.includes(value);
+  return value >= options.range[0] && value <= options.range[1];
+}

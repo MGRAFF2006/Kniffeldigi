@@ -18,40 +18,51 @@ const shot = (name) => page.screenshot({ path: `${OUT}/${name}.png`, fullPage: t
 await page.goto(`${BASE}/#/`, { waitUntil: 'networkidle' });
 await shot('01-landing');
 
-// 2. Spiel erstellen (Kniffel) → Lobby
+// 2. Analoges Spiel erstellen (Standard) → läuft sofort
 await page.fill('#create-name', 'Melanie');
 await page.click('#btn-create');
-await page.waitForSelector('#btn-start');
-await shot('02-lobby');
+await page.waitForSelector('td.val.pick.manual');
 const code = new URL(page.url()).hash.match(/game\/(\w+)/)[1];
-console.log('Spielcode:', code);
+console.log('Analog-Spielcode:', code);
 
-// 3. Zweiter Spieler tritt in eigenem Kontext bei
+// 3. Peter tritt dem laufenden Analogspiel bei und trägt etwas ein
 const page2 = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await page2.goto(`${BASE}/#/`, { waitUntil: 'networkidle' });
 await page2.fill('#join-code', code);
 await page2.fill('#join-name', 'Peter');
 await page2.click('#btn-join');
-await page2.waitForSelector('.player-list');
+await page2.waitForSelector('td.val.pick.manual');
+await page2.click('td.val.pick.manual >> nth=0'); // Einser
+await page2.waitForSelector('.chip-grid');
+await page2.click('.chip >> nth=3'); // 3 Einser
+await page2.waitForTimeout(400);
 
-// 4. Starten, würfeln, festhalten
-await page.click('#btn-start');
-await page.waitForSelector('#btn-roll');
-await page.click('#btn-roll');
-await page.waitForTimeout(600);
-await page.click('.dice-tray button.die >> nth=1');
-await page.waitForTimeout(300);
-await shot('03-spiel');
-
-// 5. Punkte eintragen → Peter ist dran
-await page.click('td.val.pick >> nth=0');
+// 4. Melanie: Eingabe-Dialog zeigen
+await page.waitForTimeout(1800); // Poll aufnehmen
+await page.click('td.val.pick.manual >> nth=1'); // Zweier
+await page.waitForSelector('.chip-grid');
+await shot('02-analog-eintragen');
+await page.click('.chip >> nth=2'); // 4 Punkte
 await page.waitForTimeout(400);
+await shot('03-analog-spiel');
 
-// 6. Zuschaueransicht
+// 5. Zuschaueransicht
 const page3 = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await page3.goto(`${BASE}/#/watch/${code}`, { waitUntil: 'networkidle' });
 await page3.waitForSelector('.scoresheet');
 await page3.screenshot({ path: `${OUT}/04-zuschauer.png`, fullPage: true });
+
+// 6. Digitales Spiel (optionaler Modus): Lobby → Start → Würfeln
+await page.goto(`${BASE}/#/`, { waitUntil: 'networkidle' });
+await page.click('.style-card[data-entry="digital"]');
+await page.fill('#create-name', 'Melanie');
+await page.click('#btn-create');
+await page.waitForSelector('#btn-start');
+await page.click('#btn-start');
+await page.waitForSelector('#btn-roll');
+await page.click('#btn-roll');
+await page.waitForTimeout(700);
+await shot('05-digital-spiel');
 
 // 7. Registrierung + Einstellungen
 await page.goto(`${BASE}/#/register`, { waitUntil: 'networkidle' });
@@ -62,16 +73,15 @@ await page.click('#reg-form button[type=submit]');
 await page.waitForSelector('.userchip');
 await page.goto(`${BASE}/#/settings`, { waitUntil: 'networkidle' });
 await page.waitForSelector('.history');
-await shot('05-einstellungen');
+await shot('06-einstellungen');
 
-// 8. Login-Seite
-await page.goto(`${BASE}/#/login`, { waitUntil: 'networkidle' });
-await shot('06-login');
-
-// Mobile Landing
+// Mobile Landing + Analogspiel
 await page.setViewportSize({ width: 390, height: 844 });
 await page.goto(`${BASE}/#/`, { waitUntil: 'networkidle' });
 await shot('07-mobil');
+await page.goto(`${BASE}/#/game/${code}`, { waitUntil: 'networkidle' });
+await page.waitForSelector('.scoresheet');
+await shot('08-mobil-spiel');
 
 await browser.close();
 if (errors.length) {

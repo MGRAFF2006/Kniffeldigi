@@ -5,8 +5,8 @@
   "type": "module",
   "description": "Digitaler Würfelblock – Kniffel & Yatzy online spielen, mit Spielcode, Live-Zuschauermodus und Konten. Gehostet auf Cloudflare Pages.",
   "scripts": {
-    "dev": "wrangler pages dev public --port 8788",
-    "deploy": "wrangler pages deploy public",
+    "dev": "wrangler dev --port 8788",
+    "deploy": "wrangler deploy",
     "db:create": "wrangler d1 create wuerfelblock-db",
     "test": "node tests/rules.test.mjs && node tests/api.test.mjs"
   },

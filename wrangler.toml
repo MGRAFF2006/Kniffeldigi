@@ -1,8 +1,16 @@
-# Cloudflare Pages Konfiguration
-# Nach `npm run db:create` die ausgegebene database_id hier eintragen.
+# Cloudflare-Worker-Konfiguration (Deploy: `npx wrangler deploy`).
+#
+# WICHTIG vor dem ersten Deploy:
+#   1. D1-Datenbank anlegen:  npx wrangler d1 create wuerfelblock-db
+#      (oder im Dashboard: Storage & Databases → D1 → Create database)
+#   2. Die ausgegebene database_id unten eintragen.
 name = "wuerfelblock"
-pages_build_output_dir = "public"
+main = "src/worker.js"
 compatibility_date = "2026-07-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
 
 [[d1_databases]]
 binding = "DB"
