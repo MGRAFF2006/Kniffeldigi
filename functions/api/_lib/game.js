@@ -81,6 +81,14 @@ function maybeFinishManual(state) {
   if (state.players.every((p) => sheetComplete(state.mode, p.scores))) finishGame(state);
 }
 
+/** Beendetes Analogspiel für eine Korrektur wieder öffnen. */
+function reopenManual(state) {
+  if (state.entry !== 'manual' || state.status !== 'finished') return;
+  state.status = 'playing';
+  state.results = null;
+  state.finishedAt = null;
+}
+
 function freshTurn(playerIndex) {
   return { player: playerIndex, rolls: 0, dice: [0, 0, 0, 0, 0], held: [false, false, false, false, false] };
 }
@@ -111,15 +119,18 @@ export function applyAction(state, token, action) {
       return;
     }
 
-    // --- Analogmodus: Ergebnis eines echten Wurfs eintragen ---
+    // --- Analogmodus: Ergebnis eines echten Wurfs eintragen (oder korrigieren) ---
     case 'enter': {
       const index = requirePlayer(state, token);
       if (state.entry !== 'manual') throw new GameError('In diesem Spiel wird digital gewürfelt.');
+      const overwrite = action.overwrite === true;
+      if (overwrite) reopenManual(state);
       if (state.status !== 'playing') throw new GameError('Das Spiel läuft gerade nicht.');
       const cat = String(action.category);
       if (!allCategories(state.mode).includes(cat)) throw new GameError('Unbekanntes Feld.');
       const player = state.players[index];
-      if (player.scores[cat] !== null) throw new GameError('Dieses Feld ist schon ausgefüllt.');
+      const previous = player.scores[cat];
+      if (previous !== null && !overwrite) throw new GameError('Dieses Feld ist schon ausgefüllt.');
       const value = Number(action.value);
       if (!validManualScore(state.mode, cat, value)) {
         throw new GameError(`${value} ist bei „${CAT_NAMES[state.mode][cat]}“ nicht möglich.`);
@@ -127,23 +138,48 @@ export function applyAction(state, token, action) {
       player.scores[cat] = value;
       pushLog(
         state,
-        value === 0
-          ? `${player.name} streicht „${CAT_NAMES[state.mode][cat]}“.`
-          : `${player.name} trägt ${value} Punkte bei „${CAT_NAMES[state.mode][cat]}“ ein.`
+        previous !== null
+          ? `${player.name} korrigiert „${CAT_NAMES[state.mode][cat]}“ von ${previous} auf ${value} Punkte.`
+          : value === 0
+            ? `${player.name} streicht „${CAT_NAMES[state.mode][cat]}“.`
+            : `${player.name} trägt ${value} Punkte bei „${CAT_NAMES[state.mode][cat]}“ ein.`
       );
       maybeFinishManual(state);
       return;
     }
 
-    // --- Analogmodus (nur Kniffel): weiteren Kniffel als +50-Bonus verbuchen ---
+    // --- Analogmodus: Eintrag rückgängig machen (Feld wieder leeren) ---
+    case 'clear': {
+      const index = requirePlayer(state, token);
+      if (state.entry !== 'manual') throw new GameError('In diesem Spiel wird digital gewürfelt.');
+      reopenManual(state);
+      if (state.status !== 'playing') throw new GameError('Das Spiel läuft gerade nicht.');
+      const cat = String(action.category);
+      if (!allCategories(state.mode).includes(cat)) throw new GameError('Unbekanntes Feld.');
+      const player = state.players[index];
+      if (player.scores[cat] === null) throw new GameError('Dieses Feld ist noch leer.');
+      player.scores[cat] = null;
+      pushLog(state, `${player.name} macht den Eintrag bei „${CAT_NAMES[state.mode][cat]}“ rückgängig.`);
+      return;
+    }
+
+    // --- Analogmodus (nur Kniffel): weiteren Kniffel als +50-Bonus verbuchen / zurücknehmen ---
     case 'extraBonus': {
       const index = requirePlayer(state, token);
       if (state.entry !== 'manual' || state.mode !== 'kniffel') throw new GameError('Der Kniffel-Bonus ist hier nicht verfügbar.');
+      reopenManual(state);
       if (state.status !== 'playing') throw new GameError('Das Spiel läuft gerade nicht.');
       const player = state.players[index];
-      if (player.scores.kniffel !== 50) throw new GameError('Erst mit einem eingetragenen Kniffel (50) gibt es Bonuspunkte.');
-      player.extraYahtzees++;
-      pushLog(state, `${player.name} würfelt einen weiteren Kniffel! +50 Bonuspunkte.`);
+      if (action.remove === true) {
+        if (player.extraYahtzees < 1) throw new GameError('Es ist kein Kniffel-Bonus verbucht.');
+        player.extraYahtzees--;
+        pushLog(state, `${player.name} nimmt einen Kniffel-Bonus (+50) zurück.`);
+      } else {
+        if (player.scores.kniffel !== 50) throw new GameError('Erst mit einem eingetragenen Kniffel (50) gibt es Bonuspunkte.');
+        player.extraYahtzees++;
+        pushLog(state, `${player.name} würfelt einen weiteren Kniffel! +50 Bonuspunkte.`);
+      }
+      maybeFinishManual(state);
       return;
     }
 

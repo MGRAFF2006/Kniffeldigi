@@ -336,11 +336,16 @@ function renderScoresheet(state, { digitalPick = false, manualPick = false } = {
     if (row.type === 'calc') {
       const cells = state.players
         .map((p, i) => {
-          // Analogmodus, Kniffel: weiteren Kniffel als Bonus verbuchen können.
-          const bonusBtn =
-            row.key === 'extraBonus' && manualPick && i === me && p.scores.kniffel === 50
-              ? ' <button type="button" class="bonus-btn" id="btn-extrabonus" title="Noch ein Kniffel gewürfelt? +50 Bonuspunkte">+50</button>'
-              : '';
+          // Analogmodus, Kniffel: weiteren Kniffel als Bonus verbuchen / zurücknehmen.
+          let bonusBtn = '';
+          if (row.key === 'extraBonus' && manualPick && i === me) {
+            if (p.scores.kniffel === 50) {
+              bonusBtn += ' <button type="button" class="bonus-btn" id="btn-extrabonus" title="Noch ein Kniffel gewürfelt? +50 Bonuspunkte">+50</button>';
+            }
+            if (p.extraYahtzees > 0) {
+              bonusBtn += ' <button type="button" class="bonus-btn" id="btn-extrabonus-minus" title="Einen Kniffel-Bonus zurücknehmen">↺</button>';
+            }
+          }
           return `<td class="val">${p.totals[row.key]}${bonusBtn}</td>`;
         })
         .join('');
@@ -352,7 +357,11 @@ function renderScoresheet(state, { digitalPick = false, manualPick = false } = {
       .map((p, i) => {
         const score = p.scores[row.cat];
         if (typeof score === 'number') {
-          return `<td class="val${score === 0 ? ' zero' : ''}">${score === 0 ? '<span class="strike">0</span>' : score}</td>`;
+          const shown = score === 0 ? '<span class="strike">0</span>' : score;
+          if (manualPick && i === me) {
+            return `<td class="val own-edit${score === 0 ? ' zero' : ''}" data-cat="${row.cat}" data-current="${score}" role="button" tabindex="0" title="${catName} ändern oder rückgängig machen">${shown}</td>`;
+          }
+          return `<td class="val${score === 0 ? ' zero' : ''}">${shown}</td>`;
         }
         if (digitalPick && i === me && dice) {
           const joker = jokerApplies(mode, dice, state.players[me].scores);
@@ -384,7 +393,8 @@ function renderGame(state) {
   const turn = state.turn;
   const myTurn = !manual && isPlayer && state.status === 'playing' && turn && turn.player === me;
   const canPick = myTurn && turn.rolls > 0;
-  const manualPick = manual && isPlayer && state.status === 'playing';
+  // Analog: Eintragen während des Spiels, Korrigieren auch noch nach Spielende.
+  const manualPick = manual && isPlayer && state.status !== 'lobby';
   const totalCats = allCategories(state.mode).length;
 
   const statusPill =
@@ -566,10 +576,12 @@ function renderGame(state) {
     el.addEventListener('click', () => doAction({ type: 'hold', die: Number(el.dataset.die) }));
   });
 
-  app.querySelectorAll('td.val.pick').forEach((el) => {
-    const pick = el.classList.contains('manual')
-      ? () => openEntryModal(state, el.dataset.cat)
-      : () => doAction({ type: 'score', category: el.dataset.cat });
+  app.querySelectorAll('td.val.pick, td.val.own-edit').forEach((el) => {
+    const pick = el.classList.contains('own-edit')
+      ? () => openEntryModal(state, el.dataset.cat, Number(el.dataset.current))
+      : el.classList.contains('manual')
+        ? () => openEntryModal(state, el.dataset.cat)
+        : () => doAction({ type: 'score', category: el.dataset.cat });
     el.addEventListener('click', pick);
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
   });
@@ -577,6 +589,10 @@ function renderGame(state) {
   const bonusBtn = document.getElementById('btn-extrabonus');
   if (bonusBtn) bonusBtn.addEventListener('click', () => {
     if (confirm('Weiteren Kniffel gewürfelt? +50 Bonuspunkte werden verbucht.')) doAction({ type: 'extraBonus' });
+  });
+  const bonusMinusBtn = document.getElementById('btn-extrabonus-minus');
+  if (bonusMinusBtn) bonusMinusBtn.addEventListener('click', () => {
+    if (confirm('Einen Kniffel-Bonus (+50) zurücknehmen?')) doAction({ type: 'extraBonus', remove: true });
   });
 }
 
@@ -587,11 +603,12 @@ function closeEntryModal() {
   if (el) el.remove();
 }
 
-function openEntryModal(state, cat) {
+function openEntryModal(state, cat, current = null) {
   closeEntryModal();
   const [catName, catHint] = LABELS[state.mode][cat];
   const options = manualScoreOptions(state.mode, cat);
   const values = options.choices || options.set;
+  const editing = current !== null;
 
   const body = values
     ? `<div class="chip-grid">
@@ -610,20 +627,32 @@ function openEntryModal(state, cat) {
   overlay.id = 'entry-modal';
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
-    <div class="modal sheet" role="dialog" aria-modal="true" aria-label="${esc(catName)} eintragen">
+    <div class="modal" role="dialog" aria-modal="true" aria-label="${esc(catName)} ${editing ? 'korrigieren' : 'eintragen'}">
       <div class="sheet-head"><h2>${esc(catName)}</h2><span class="sub">${esc(catHint)}</span></div>
       <div class="sheet-body">
-        <p class="muted" style="margin-top:0">Was hast du gewürfelt? Punkte auswählen:</p>
+        <p class="muted" style="margin-top:0">${
+          editing
+            ? `Aktuell eingetragen: <strong>${current} Punkte</strong>. Neuen Wert wählen:`
+            : 'Was hast du gewürfelt? Punkte auswählen:'
+        }</p>
         ${body}
-        <div class="btn-row"><button type="button" class="btn ghost small" id="entry-cancel">Abbrechen</button></div>
+        <div class="btn-row">
+          ${editing ? '<button type="button" class="btn ghost small" id="entry-clear">↺ Eintrag rückgängig (Feld leeren)</button>' : ''}
+          <button type="button" class="btn ghost small" id="entry-cancel">Abbrechen</button>
+        </div>
       </div>
     </div>`;
   document.body.appendChild(overlay);
 
   const submit = (value) => {
     closeEntryModal();
-    doAction({ type: 'enter', category: cat, value });
+    doAction({ type: 'enter', category: cat, value, overwrite: editing });
   };
+  const clearBtn = overlay.querySelector('#entry-clear');
+  if (clearBtn) clearBtn.addEventListener('click', () => {
+    closeEntryModal();
+    doAction({ type: 'clear', category: cat });
+  });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeEntryModal(); });
   overlay.querySelector('#entry-cancel').addEventListener('click', closeEntryModal);
   overlay.querySelectorAll('.chip').forEach((chip) => chip.addEventListener('click', () => submit(Number(chip.dataset.value))));

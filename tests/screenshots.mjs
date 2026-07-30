@@ -46,13 +46,24 @@ await page.click('.chip >> nth=2'); // 4 Punkte
 await page.waitForTimeout(400);
 await shot('03-analog-spiel');
 
-// 5. Zuschaueransicht
+// 5. Ausgefülltes Feld korrigieren / rückgängig machen
+await page.click('td.val.own-edit[data-current="4"]');
+await page.waitForSelector('#entry-clear');
+await page.waitForTimeout(250);
+await shot('03-korrektur');
+await page.click('#entry-clear');
+await page.waitForSelector('td.val.pick.manual[data-cat="twos"]');
+await page.click('td.val.pick.manual[data-cat="twos"]');
+await page.click('.chip[data-value="4"]');
+await page.waitForSelector('td.val.own-edit[data-current="4"]');
+
+// 6. Zuschaueransicht
 const page3 = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await page3.goto(`${BASE}/#/watch/${code}`, { waitUntil: 'networkidle' });
 await page3.waitForSelector('.scoresheet');
 await page3.screenshot({ path: `${OUT}/04-zuschauer.png`, fullPage: true });
 
-// 6. Digitales Spiel (optionaler Modus): Lobby → Start → Würfeln
+// 7. Digitales Spiel (optionaler Modus): Lobby → Start → Würfeln
 await page.goto(`${BASE}/#/`, { waitUntil: 'networkidle' });
 await page.click('.style-card[data-entry="digital"]');
 await page.fill('#create-name', 'Melanie');
@@ -64,7 +75,7 @@ await page.click('#btn-roll');
 await page.waitForTimeout(700);
 await shot('05-digital-spiel');
 
-// 7. Registrierung + Einstellungen
+// 8. Registrierung + Einstellungen
 await page.goto(`${BASE}/#/register`, { waitUntil: 'networkidle' });
 await page.fill('#rg-user', `shot_${Date.now().toString(36)}`);
 await page.fill('#rg-display', 'Melanie');
