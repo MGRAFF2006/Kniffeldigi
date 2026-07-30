@@ -28,8 +28,10 @@ Läuft auf **Cloudflare** (Worker + statische Assets + D1).
 - **Design:** nach dem klassischen gedruckten Wertungsblock: sauberes weißes Papier, kräftiges
   Tabellenraster, getrennte Spalten für Kategorie und Wertungsregel, kleine Würfelbilder bei Einsern
   bis Sechsern sowie „Spiel 1“, „Spiel 2“ usw. über den handschriftlichen Spielernamen. Spieltitel und
-  Code/Name-Linie sitzen wie auf dem Originalbogen. Die fünf Würfel auf dem Deckblatt lassen sich
-  antippen und rollen als kleine Spielerei.
+  Code/Name-Linie sitzen wie auf dem Originalbogen. Es gibt keine traditionelle Website-Kopfzeile und
+  keinen Footer – jede Ansicht ist selbst das individuelle Papierformular; Konto-/Einstellungslinks
+  stehen nur als kleine Randnotiz auf dem Blatt. Die fünf Würfel auf dem Deckblatt lassen sich antippen
+  und rollen als kleine Spielerei.
 
 ## Projektstruktur
 

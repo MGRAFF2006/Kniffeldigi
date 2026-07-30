@@ -1593,3 +1593,73 @@ table.scoresheet {
     font-size: 0.85rem;
   }
 }
+
+/* Das Papier IST die Seite: keine Website-Kopfzeile, kein Footer. */
+.paper-page {
+  position: relative;
+}
+
+#app {
+  padding-top: 28px;
+}
+
+.paper-tools {
+  position: absolute;
+  z-index: 10;
+  top: 12px;
+  right: 38px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  color: #333;
+  font: 700 0.58rem Arial, Helvetica, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.paper-tools a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+.paper-tools a:hover {
+  border-bottom-color: currentColor;
+}
+
+.paper-tools .paper-home {
+  padding-right: 13px;
+  border-right: 1px solid #777;
+}
+
+.paper-tools .paper-home:hover {
+  border-bottom-color: transparent;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.paper-tools .userchip {
+  color: var(--ink);
+  font: 700 0.9rem var(--font-hand);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+@media (max-width: 720px) {
+  #app {
+    padding-top: 34px;
+  }
+
+  .paper-tools {
+    top: 9px;
+    left: 8px;
+    right: 8px;
+    justify-content: flex-end;
+    gap: 9px;
+    font-size: 0.52rem;
+  }
+
+  .paper-tools .paper-home {
+    margin-right: auto;
+  }
+}
