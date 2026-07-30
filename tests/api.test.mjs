@@ -170,6 +170,25 @@ assert.equal(res.status, 200, 'Analog: Gast trägt ohne Reihenfolge ein');
 res = await call('POST', `/games/${mCode}/action`, { body: { type: 'enter', category: 'ones', value: 2 }, playerToken: mHost });
 assert.equal(res.status, 400, 'Analog: Feld schon ausgefüllt');
 
+// Eigene Einträge können korrigiert oder vollständig rückgängig gemacht werden.
+res = await call('POST', `/games/${mCode}/action`, {
+  body: { type: 'enter', category: 'ones', value: 4, overwrite: true },
+  playerToken: mHost,
+});
+assert.equal(res.status, 200, 'Analog: bestehenden Eintrag korrigieren');
+assert.equal(res.data.state.players[0].scores.ones, 4, 'Analog: korrigierter Wert gespeichert');
+res = await call('POST', `/games/${mCode}/action`, {
+  body: { type: 'clear', category: 'ones' },
+  playerToken: mHost,
+});
+assert.equal(res.status, 200, 'Analog: Eintrag rückgängig machen');
+assert.equal(res.data.state.players[0].scores.ones, null, 'Analog: Feld wieder leer');
+res = await call('POST', `/games/${mCode}/action`, {
+  body: { type: 'enter', category: 'ones', value: 3 },
+  playerToken: mHost,
+});
+assert.equal(res.status, 200, 'Analog: geleertes Feld erneut ausfüllen');
+
 // Kniffel-Bonus erst nach eingetragenem Kniffel (50).
 res = await call('POST', `/games/${mCode}/action`, { body: { type: 'extraBonus' }, playerToken: mHost });
 assert.equal(res.status, 400, 'Analog: Bonus ohne Kniffel gesperrt');
@@ -178,6 +197,11 @@ assert.equal(res.status, 200);
 res = await call('POST', `/games/${mCode}/action`, { body: { type: 'extraBonus' }, playerToken: mHost });
 assert.equal(res.status, 200, 'Analog: Bonus nach Kniffel ok');
 assert.equal(res.data.state.players[0].totals.extraBonus, 50, 'Analog: +50 verbucht');
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'extraBonus', remove: true }, playerToken: mHost });
+assert.equal(res.status, 200, 'Analog: Kniffel-Bonus zurücknehmen');
+assert.equal(res.data.state.players[0].totals.extraBonus, 0, 'Analog: +50 zurückgenommen');
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'extraBonus' }, playerToken: mHost });
+assert.equal(res.status, 200, 'Analog: Kniffel-Bonus erneut verbuchen');
 
 // Beide Bögen komplett füllen → Spiel endet automatisch.
 const kniffelCats = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes', 'threeKind', 'fourKind', 'fullHouse', 'smallStraight', 'largeStraight', 'kniffel', 'chance'];
@@ -193,6 +217,21 @@ for (const [playerIndex, token] of [[0, mHost], [1, mGuest]].map((x) => x)) {
 assert.equal(mState.status, 'finished', 'Analogspiel automatisch beendet');
 assert.equal(mState.results.length, 2, 'Analog: Ergebnisliste');
 assert.equal(mState.results[0].name, 'Melanie', 'Analog: Melanie gewinnt (53+35+50... > 23)');
+
+// Auch nach dem automatischen Ende kann ein Fehler rückgängig gemacht werden.
+res = await call('POST', `/games/${mCode}/action`, {
+  body: { type: 'clear', category: 'ones' },
+  playerToken: mHost,
+});
+assert.equal(res.status, 200, 'Analog: Eintrag nach Spielende rückgängig machen');
+assert.equal(res.data.state.status, 'playing', 'Analog: Spiel für Korrektur wieder geöffnet');
+assert.equal(res.data.state.players[0].scores.ones, null, 'Analog: Feld nach Ende wieder leer');
+res = await call('POST', `/games/${mCode}/action`, {
+  body: { type: 'enter', category: 'ones', value: 3 },
+  playerToken: mHost,
+});
+assert.equal(res.status, 200, 'Analog: Korrektur nach Spielende neu eintragen');
+assert.equal(res.data.state.status, 'finished', 'Analog: Spiel nach Korrektur wieder beendet');
 
 // Nach Spielende kein Beitritt mehr.
 res = await call('POST', `/games/${mCode}/join`, { body: { name: 'Spät' } });

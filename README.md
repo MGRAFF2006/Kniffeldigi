@@ -13,6 +13,10 @@ Läuft auf **Cloudflare** (Worker + statische Assets + D1).
   Jeder füllt seinen eigenen Bogen; unmögliche Werte werden serverseitig abgelehnt
   (z. B. 7 Einser oder Full House mit 24 Punkten). Fortschritt (ausgefüllte Felder) ist für alle sichtbar,
   das Spiel endet automatisch, sobald alle Bögen voll sind. Kniffel-Bonus (+50 je weiterem Kniffel) per Knopf.
+- **Fehler korrigieren:** Eigene ausgefüllte Felder antippen, um den Wert zu ändern oder den Eintrag
+  vollständig rückgängig zu machen. Auch ein beendetes Analogspiel wird für eine Korrektur wieder geöffnet;
+  Rangliste und protokollierte Ergebnisse werden anschließend sauber neu berechnet. Kniffel-Boni lassen sich
+  ebenfalls zurücknehmen.
 - **Digitalmodus (optional):** Die App würfelt rundenbasiert mit Krypto-Zufall – für Runden über Distanz,
   inkl. Würfel festhalten, 3 Würfen und Jokerregel.
 - **Zwei echte Bögen:** Kniffel (Pasche = Summe aller Würfel, Straßen 30/40, Bonus +35) und
@@ -21,7 +25,10 @@ Läuft auf **Cloudflare** (Worker + statische Assets + D1).
 - **Konten & Historie:** Registrierung/Login (PBKDF2-gehashte Passwörter). Ergebnisse eingeloggter
   Spieler werden protokolliert: Siege, Bestwerte, Durchschnitt, komplette Liste.
 - **Einstellungen:** Anzeigename & Passwort ändern, Tintenfarbe der „Handschrift“, Spielhistorie.
-- **Design:** weißes Spielblatt mit Papierlinien, Handschrift-Font und animierten Würfeln.
+- **Design:** reduziert wie ein klassischer schwarzweißer Spielblock: kompakte Tabellen, gerade
+  Formularfelder, zurückhaltende Graustufen und ein durchgehendes 28-Pixel-Grundlinienraster, an dem
+  Papierlinien und Schrift ausgerichtet sind. Die fünf Würfel auf dem Deckblatt lassen sich antippen
+  und rollen als kleine Spielerei.
 
 ## Projektstruktur
 

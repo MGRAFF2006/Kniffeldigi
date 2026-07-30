@@ -14,10 +14,17 @@ export async function onRequestPost({ request, env, params }) {
     if (!game) return apiError('Kein Spiel mit diesem Code gefunden.', 404);
 
     const wasFinished = game.state.status === 'finished';
+    // Aktionen, die ein beendetes Analogspiel wieder öffnen bzw. Ergebnisse ändern können.
+    const editAction = ['enter', 'clear', 'extraBonus'].includes(action.type);
     try {
       applyAction(game.state, playerToken, action);
       await saveGame(env, game);
-      if (!wasFinished && game.state.status === 'finished') {
+      const isFinished = game.state.status === 'finished';
+      if (wasFinished && editAction) {
+        // Alte protokollierte Ergebnisse verwerfen – sie werden bei erneutem Spielende neu geschrieben.
+        await env.DB.prepare('DELETE FROM game_results WHERE game_code = ?').bind(game.code).run();
+      }
+      if (isFinished && (!wasFinished || editAction)) {
         await recordResults(env, game.code, game.state);
       }
       return json({ code: game.code, version: game.version, state: publicState(game.state, playerToken) });
