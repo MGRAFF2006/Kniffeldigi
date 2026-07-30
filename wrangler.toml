@@ -1,9 +1,4 @@
 # Cloudflare-Worker-Konfiguration (Deploy: `npx wrangler deploy`).
-#
-# WICHTIG vor dem ersten Deploy:
-#   1. D1-Datenbank anlegen:  npx wrangler d1 create wuerfelblock-db
-#      (oder im Dashboard: Storage & Databases → D1 → Create database)
-#   2. Die ausgegebene database_id unten eintragen.
 name = "wuerfelblock"
 main = "src/worker.js"
 compatibility_date = "2026-07-01"
@@ -15,4 +10,4 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "wuerfelblock-db"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "22aa05f1-ff46-488e-862f-8772831dcc1f"
