@@ -58,10 +58,12 @@ function dieHTML(face, { held = false, index = null, clickable = false, blank = 
 function renderNav() {
   const user = getStoredUser();
   topnav.innerHTML = user
-    ? `<span class="userchip">✎ ${esc(user.displayName)}</span>
+    ? `<a href="#/" class="paper-home">Startblatt</a>
+       <span class="userchip">${esc(user.displayName)}</span>
        <a href="#/settings">Einstellungen</a>
        <a href="#/" id="nav-logout">Abmelden</a>`
-    : `<a href="#/settings">Einstellungen</a>
+    : `<a href="#/" class="paper-home">Startblatt</a>
+       <a href="#/settings">Einstellungen</a>
        <a href="#/login" class="accent">Anmelden</a>`;
   const logout = document.getElementById('nav-logout');
   if (logout) {
