@@ -1,0 +1,13 @@
+# Cloudflare-Worker-Konfiguration (Deploy: `npx wrangler deploy`).
+name = "wuerfelblock"
+main = "src/worker.js"
+compatibility_date = "2026-07-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "wuerfelblock-db"
+database_id = "22aa05f1-ff46-488e-862f-8772831dcc1f"
