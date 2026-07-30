@@ -1,0 +1,258 @@
+// Spiel-Engine: Zustandsverwaltung, Zugvalidierung und Persistenz in D1.
+
+import {
+  CAT_NAMES,
+  MODES,
+  allCategories,
+  emptyScores,
+  jokerApplies,
+  scoreCategory,
+  sheetComplete,
+  totals,
+} from './rules.js';
+import { normalizeCode, randomDie, randomGameCode, randomToken } from './util.js';
+
+export const MAX_PLAYERS = 8;
+export const MAX_ROLLS = 3;
+
+export function newGameState(mode) {
+  return {
+    mode,
+    status: 'lobby', // lobby | playing | finished
+    players: [], // { token, name, userId, scores, extraYahtzees }
+    turn: null, // { player, rolls, dice[5], held[5] }
+    round: 0,
+    results: null,
+    log: [],
+    createdAt: Date.now(),
+    startedAt: null,
+    finishedAt: null,
+  };
+}
+
+export function addPlayer(state, name, userId) {
+  if (state.status !== 'lobby') throw new GameError('Das Spiel läuft bereits.');
+  if (state.players.length >= MAX_PLAYERS) throw new GameError('Das Spiel ist voll (max. 8 Spieler).');
+  if (state.players.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
+    throw new GameError('Dieser Name ist in diesem Spiel schon vergeben.');
+  }
+  const player = {
+    token: randomToken(),
+    name,
+    userId: userId || null,
+    scores: emptyScores(state.mode),
+    extraYahtzees: 0,
+  };
+  state.players.push(player);
+  pushLog(state, `${name} ist dem Spiel beigetreten.`);
+  return player;
+}
+
+export class GameError extends Error {}
+
+function pushLog(state, text) {
+  state.log.push({ t: Date.now(), text });
+  if (state.log.length > 50) state.log.splice(0, state.log.length - 50);
+}
+
+function requirePlayer(state, token) {
+  const index = state.players.findIndex((p) => p.token === token);
+  if (index < 0) throw new GameError('Du bist kein Spieler in diesem Spiel.');
+  return index;
+}
+
+function requireCurrentPlayer(state, token) {
+  const index = requirePlayer(state, token);
+  if (state.status !== 'playing') throw new GameError('Das Spiel läuft gerade nicht.');
+  if (state.turn.player !== index) throw new GameError('Du bist nicht an der Reihe.');
+  return index;
+}
+
+function freshTurn(playerIndex) {
+  return { player: playerIndex, rolls: 0, dice: [0, 0, 0, 0, 0], held: [false, false, false, false, false] };
+}
+
+export function applyAction(state, token, action) {
+  switch (action.type) {
+    case 'start': {
+      const index = requirePlayer(state, token);
+      if (index !== 0) throw new GameError('Nur wer das Spiel erstellt hat, kann es starten.');
+      if (state.status !== 'lobby') throw new GameError('Das Spiel läuft bereits.');
+      if (state.players.length < 1) throw new GameError('Es ist noch niemand beigetreten.');
+      state.status = 'playing';
+      state.startedAt = Date.now();
+      state.round = 1;
+      state.turn = freshTurn(0);
+      pushLog(state, `Runde 1 beginnt – ${state.players[0].name} ist am Zug.`);
+      return;
+    }
+
+    case 'leave': {
+      const index = requirePlayer(state, token);
+      if (state.status !== 'lobby') throw new GameError('Während des Spiels kann man nicht austreten.');
+      const [player] = state.players.splice(index, 1);
+      pushLog(state, `${player.name} hat das Spiel verlassen.`);
+      return;
+    }
+
+    case 'roll': {
+      const index = requireCurrentPlayer(state, token);
+      const turn = state.turn;
+      if (turn.rolls >= MAX_ROLLS) throw new GameError('Du hast schon dreimal gewürfelt.');
+      for (let i = 0; i < 5; i++) {
+        if (turn.rolls === 0 || !turn.held[i]) turn.dice[i] = randomDie();
+      }
+      turn.rolls++;
+      if (turn.rolls === 1) turn.held = [false, false, false, false, false];
+      return;
+    }
+
+    case 'hold': {
+      requireCurrentPlayer(state, token);
+      const turn = state.turn;
+      const i = Number(action.die);
+      if (!Number.isInteger(i) || i < 0 || i > 4) throw new GameError('Ungültiger Würfel.');
+      if (turn.rolls === 0) throw new GameError('Erst würfeln, dann Würfel festhalten.');
+      if (turn.rolls >= MAX_ROLLS) throw new GameError('Keine Würfe mehr übrig.');
+      turn.held[i] = !turn.held[i];
+      return;
+    }
+
+    case 'score': {
+      const index = requireCurrentPlayer(state, token);
+      const turn = state.turn;
+      if (turn.rolls === 0) throw new GameError('Erst würfeln, dann eintragen.');
+      const cat = String(action.category);
+      if (!allCategories(state.mode).includes(cat)) throw new GameError('Unbekanntes Feld.');
+      const player = state.players[index];
+      if (player.scores[cat] !== null) throw new GameError('Dieses Feld ist schon ausgefüllt.');
+
+      const joker = jokerApplies(state.mode, turn.dice, player.scores);
+      if (joker) {
+        player.extraYahtzees++;
+        pushLog(state, `${player.name} würfelt einen weiteren Kniffel! +50 Bonuspunkte.`);
+      }
+      const points = scoreCategory(state.mode, cat, turn.dice, joker);
+      player.scores[cat] = points;
+      pushLog(state, `${player.name} trägt ${points} Punkte bei „${CAT_NAMES[state.mode][cat]}“ ein.`);
+
+      advanceTurn(state, index);
+      return;
+    }
+
+    default:
+      throw new GameError('Unbekannte Aktion.');
+  }
+}
+
+function advanceTurn(state, lastIndex) {
+  if (state.players.every((p) => sheetComplete(state.mode, p.scores))) {
+    finishGame(state);
+    return;
+  }
+  let next = lastIndex;
+  for (let i = 0; i < state.players.length; i++) {
+    next = (next + 1) % state.players.length;
+    if (!sheetComplete(state.mode, state.players[next].scores)) break;
+  }
+  if (next <= lastIndex) {
+    state.round++;
+    pushLog(state, `Runde ${state.round} beginnt.`);
+  }
+  state.turn = freshTurn(next);
+}
+
+function finishGame(state) {
+  state.status = 'finished';
+  state.finishedAt = Date.now();
+  state.turn = null;
+  const scored = state.players
+    .map((p, i) => ({ index: i, name: p.name, userId: p.userId, total: totals(state.mode, p.scores, p.extraYahtzees).grandTotal }))
+    .sort((a, b) => b.total - a.total);
+  let place = 0;
+  let lastTotal = null;
+  state.results = scored.map((entry, i) => {
+    if (entry.total !== lastTotal) {
+      place = i + 1;
+      lastTotal = entry.total;
+    }
+    return { ...entry, place };
+  });
+  const winners = state.results.filter((r) => r.place === 1).map((r) => r.name);
+  pushLog(state, `Spiel beendet! ${winners.join(' & ')} gewinnt mit ${state.results[0].total} Punkten.`);
+}
+
+/** Öffentliche Sicht auf den Zustand: keine Spieler-Tokens, aber "you"-Index für den Anfragenden. */
+export function publicState(state, requesterToken) {
+  const you = requesterToken ? state.players.findIndex((p) => p.token === requesterToken) : -1;
+  return {
+    mode: state.mode,
+    modeName: MODES[state.mode].name,
+    status: state.status,
+    round: state.round,
+    turn: state.turn,
+    results: state.results,
+    log: state.log.slice(-12),
+    createdAt: state.createdAt,
+    startedAt: state.startedAt,
+    finishedAt: state.finishedAt,
+    you: you >= 0 ? you : null,
+    players: state.players.map((p) => ({
+      name: p.name,
+      hasAccount: !!p.userId,
+      scores: p.scores,
+      extraYahtzees: p.extraYahtzees,
+      totals: totals(state.mode, p.scores, p.extraYahtzees),
+    })),
+  };
+}
+
+// --- Persistenz ---
+
+export async function loadGame(env, code) {
+  const row = await env.DB.prepare('SELECT code, mode, status, state, version FROM games WHERE code = ?')
+    .bind(normalizeCode(code))
+    .first();
+  if (!row) return null;
+  return { code: row.code, version: row.version, state: JSON.parse(row.state) };
+}
+
+export async function createGame(env, mode) {
+  const state = newGameState(mode);
+  // Bei Kollision des Codes einfach neu versuchen.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = randomGameCode();
+    try {
+      await env.DB.prepare(
+        'INSERT INTO games (code, mode, status, state, version, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)'
+      )
+        .bind(code, mode, state.status, JSON.stringify(state), Date.now(), Date.now())
+        .run();
+      return { code, version: 1, state };
+    } catch (err) {
+      if (attempt === 4) throw err;
+    }
+  }
+}
+
+/** Optimistisches Speichern; wirft bei Versionskonflikt. */
+export async function saveGame(env, game) {
+  const result = await env.DB.prepare(
+    'UPDATE games SET state = ?, status = ?, version = version + 1, updated_at = ? WHERE code = ? AND version = ?'
+  )
+    .bind(JSON.stringify(game.state), game.state.status, Date.now(), game.code, game.version)
+    .run();
+  if (!result.meta.changes) throw new GameError('Konflikt – bitte noch einmal versuchen.');
+  game.version++;
+}
+
+/** Ergebnisse nach Spielende für eingeloggte Spieler protokollieren. */
+export async function recordResults(env, code, state) {
+  if (!state.results) return;
+  const stmts = state.results.map((r) =>
+    env.DB.prepare(
+      'INSERT INTO game_results (game_code, mode, user_id, player_name, score, placement, player_count, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(code, state.mode, r.userId, r.name, r.total, r.place, state.players.length, state.finishedAt)
+  );
+  if (stmts.length) await env.DB.batch(stmts);
+}

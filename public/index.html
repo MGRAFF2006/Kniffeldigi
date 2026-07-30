@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Würfelblock – Kniffel &amp; Yatzy online</title>
+  <meta name="description" content="Der digitale Würfelblock: Kniffel und Yatzy online spielen. Spiel erstellen, Code teilen, gemeinsam würfeln – Freunde können live zuschauen." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='4' y='4' width='56' height='56' rx='12' fill='%23ffffff' stroke='%231b1c20' stroke-width='4'/%3E%3Ccircle cx='20' cy='20' r='6' fill='%23d92b2b'/%3E%3Ccircle cx='44' cy='20' r='6' fill='%23d92b2b'/%3E%3Ccircle cx='32' cy='32' r='6' fill='%23d92b2b'/%3E%3Ccircle cx='20' cy='44' r='6' fill='%23d92b2b'/%3E%3Ccircle cx='44' cy='44' r='6' fill='%23d92b2b'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Caveat:wght@500;700&family=Inter:wght@400;500;600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">
+      <span class="brand-die" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></span>
+      <span class="brand-name">WÜRFEL<em>BLOCK</em></span>
+    </a>
+    <nav class="topnav" id="topnav"></nav>
+  </header>
+
+  <main id="app" aria-live="polite"></main>
+
+  <footer class="footer">
+    <p>Würfelblock · Kniffel &amp; Yatzy online · gehostet auf Cloudflare Pages</p>
+  </footer>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
