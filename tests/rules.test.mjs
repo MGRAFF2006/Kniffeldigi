@@ -1,9 +1,8 @@
-// Unit-Tests für die Wertungslogik (Server) + Abgleich mit der Client-Kopie.
+// Unit-Tests für die Wertungslogik.
 // Ausführen: node tests/rules.test.mjs
 
 import assert from 'node:assert/strict';
-import * as server from '../functions/api/_lib/rules.js';
-import * as client from '../public/js/rules.js';
+import * as rules from '../public/js/rules.js';
 
 let passed = 0;
 function eq(actual, expected, label) {
@@ -11,7 +10,7 @@ function eq(actual, expected, label) {
   passed++;
 }
 
-const s = server.scoreCategory;
+const s = rules.scoreCategory;
 
 // --- Oberer Teil (beide Spiele identisch) ---
 eq(s('kniffel', 'ones', [1, 1, 3, 4, 1]), 3, 'Kniffel Einser');
@@ -48,35 +47,40 @@ eq(s('yatzy', 'yatzy', [6, 6, 6, 6, 6]), 50, 'Yatzy 50');
 // --- Kniffel-Jokerregel ---
 eq(s('kniffel', 'fullHouse', [5, 5, 5, 5, 5], true), 25, 'Joker Full House');
 eq(s('kniffel', 'largeStraight', [5, 5, 5, 5, 5], true), 40, 'Joker große Straße');
-assert.equal(server.jokerApplies('kniffel', [5, 5, 5, 5, 5], { kniffel: 50 }), true, 'Joker greift');
-assert.equal(server.jokerApplies('kniffel', [5, 5, 5, 5, 5], { kniffel: null }), false, 'Joker greift nicht ohne Kniffel-Eintrag');
-assert.equal(server.jokerApplies('yatzy', [5, 5, 5, 5, 5], { yatzy: 50 }), false, 'Yatzy kennt keinen Joker');
+assert.equal(rules.jokerApplies('kniffel', [5, 5, 5, 5, 5], { kniffel: 50 }), true, 'Joker greift');
+assert.equal(rules.jokerApplies('kniffel', [5, 5, 5, 5, 5], { kniffel: null }), false, 'Joker greift nicht ohne Kniffel-Eintrag');
+assert.equal(rules.jokerApplies('yatzy', [5, 5, 5, 5, 5], { yatzy: 50 }), false, 'Yatzy kennt keinen Joker');
 passed += 3;
 
 // --- Boni & Summen ---
 {
-  const scores = server.emptyScores('kniffel');
+  const scores = rules.emptyScores('kniffel');
   ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes'].forEach((cat, i) => (scores[cat] = (i + 1) * 3)); // 63
-  const t = server.totals('kniffel', scores, 1);
+  const t = rules.totals('kniffel', scores, 1);
   eq(t.bonus, 35, 'Kniffel Bonus bei 63');
   eq(t.extraBonus, 50, 'Kniffel Extra-Bonus');
   eq(t.grandTotal, 63 + 35 + 50, 'Kniffel Endsumme');
 }
 {
-  const scores = server.emptyScores('yatzy');
+  const scores = rules.emptyScores('yatzy');
   scores.sixes = 24; // < 63 gesamt
-  const t = server.totals('yatzy', scores, 0);
+  const t = rules.totals('yatzy', scores, 0);
   eq(t.bonus, 0, 'Yatzy kein Bonus unter 63');
   ['ones', 'twos', 'threes', 'fours', 'fives'].forEach((cat, i) => (scores[cat] = (i + 1) * 4));
-  eq(server.totals('yatzy', scores, 0).bonus, 50, 'Yatzy Bonus 50 ab 63');
+  eq(rules.totals('yatzy', scores, 0).bonus, 50, 'Yatzy Bonus 50 ab 63');
 }
 
 // --- Kategorien-Listen ---
-eq(server.allCategories('kniffel').length, 13, 'Kniffel: 13 Felder');
-eq(server.allCategories('yatzy').length, 15, 'Yatzy: 15 Felder');
+eq(rules.allCategories('kniffel').length, 13, 'Kniffel: 13 Felder');
+eq(rules.allCategories('yatzy').length, 15, 'Yatzy: 15 Felder');
+
+// CAT_NAMES folgt LABELS (eine Quelle)
+assert.equal(rules.CAT_NAMES.kniffel.kniffel, 'Kniffel');
+assert.equal(rules.CAT_NAMES.yatzy.onePair, 'Ein Paar');
+passed += 2;
 
 // --- Analogmodus: manuelle Werte-Validierung ---
-const v = server.validManualScore;
+const v = rules.validManualScore;
 eq(v('kniffel', 'ones', 3), true, 'Manuell: 3 Einser ok');
 eq(v('kniffel', 'ones', 7), false, 'Manuell: 7 Einser unmöglich');
 eq(v('kniffel', 'twos', 5), false, 'Manuell: Zweier nur Vielfache von 2');
@@ -95,36 +99,10 @@ eq(v('yatzy', 'fullHouse', 6), false, 'Manuell: Yatzy Full House 6 unmöglich');
 eq(v('yatzy', 'largeStraight', 20), true, 'Manuell: Yatzy große Straße 20');
 eq(v('yatzy', 'largeStraight', 15), false, 'Manuell: Yatzy große Straße nur 0/20');
 
-// Client-Kopie der manuellen Validierung muss identisch sein.
-for (const mode of ['kniffel', 'yatzy']) {
-  for (const cat of server.allCategories(mode)) {
-    for (let val = 0; val <= 55; val++) {
-      assert.equal(
-        server.validManualScore(mode, cat, val),
-        client.validManualScore(mode, cat, val),
-        `Client/Server-Abweichung bei validManualScore: ${mode}/${cat}/${val}`
-      );
-    }
-  }
-}
-passed++;
+// Server-Re-Export muss dieselbe Modulinstanz liefern
+import * as server from '../functions/api/_lib/rules.js';
+assert.equal(server.scoreCategory, rules.scoreCategory, 'Server re-exportiert dieselbe scoreCategory');
+assert.equal(server.validManualScore, rules.validManualScore, 'Server re-exportiert dieselbe validManualScore');
+passed += 2;
 
-// --- Client-Kopie muss identisch werten ---
-let random = 42;
-const nextDie = () => {
-  random = (random * 1103515245 + 12345) % 2 ** 31;
-  return (random % 6) + 1;
-};
-for (let i = 0; i < 2000; i++) {
-  const dice = [nextDie(), nextDie(), nextDie(), nextDie(), nextDie()];
-  for (const mode of ['kniffel', 'yatzy']) {
-    for (const cat of server.allCategories(mode)) {
-      const a = server.scoreCategory(mode, cat, dice);
-      const b = client.scoreCategory(mode, cat, dice);
-      assert.equal(a, b, `Client/Server-Abweichung: ${mode}/${cat} bei [${dice}] (${a} vs. ${b})`);
-    }
-  }
-}
-passed++;
-
-console.log(`✔ rules.test: alle ${passed} Prüfungen bestanden (inkl. 2000 Zufallswürfe Client/Server-Abgleich).`);
+console.log(`✔ rules.test: alle ${passed} Prüfungen bestanden.`);

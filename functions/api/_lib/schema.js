@@ -1,7 +1,6 @@
--- Datenbankschema für den Würfelblock (Spiegel von functions/api/_lib/schema.js).
--- Wird automatisch beim ersten API-Request angelegt. Manuelle Migration:
---   wrangler d1 execute wuerfelblock-db --file=schema.sql
+// D1-Schema. Referenzkopie für CLI-Migrationen: schema.sql (inhaltlich identisch halten).
 
+export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -10,14 +9,12 @@ CREATE TABLE IF NOT EXISTS users (
   salt TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS games (
   code TEXT PRIMARY KEY,
   mode TEXT NOT NULL,
@@ -27,7 +24,6 @@ CREATE TABLE IF NOT EXISTS games (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS game_results (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   game_code TEXT NOT NULL,
@@ -39,6 +35,6 @@ CREATE TABLE IF NOT EXISTS game_results (
   player_count INTEGER NOT NULL,
   finished_at INTEGER NOT NULL
 );
-
 CREATE INDEX IF NOT EXISTS idx_results_user ON game_results (user_id, finished_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions (expires_at);
+`;

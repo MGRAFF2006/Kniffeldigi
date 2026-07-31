@@ -31,6 +31,26 @@ function rememberName(name) {
   localStorage.setItem('wb_name', name);
 }
 
+function bindRadioGroup(selector, onSelect) {
+  app.querySelectorAll(selector).forEach((card) => {
+    card.addEventListener('click', () => {
+      app.querySelectorAll(selector).forEach((c) => {
+        c.classList.toggle('selected', c === card);
+        c.setAttribute('aria-checked', c === card ? 'true' : 'false');
+      });
+      onSelect(card);
+    });
+  });
+}
+
+function shareButtonsHTML(centered = false) {
+  return `<div class="btn-row${centered ? ' center' : ''}">
+    <button class="btn ghost small" id="btn-copycode">Code kopieren</button>
+    <button class="btn ghost small" id="btn-copylink">Einladungslink kopieren</button>
+    <button class="btn ghost small" id="btn-copywatch">Zuschauer-Link kopieren</button>
+  </div>`;
+}
+
 const INK_COLORS = { blau: '#1d3fbd', schwarz: '#22242a', gruen: '#0e7a3d', lila: '#7027b8' };
 
 function applyInk() {
@@ -103,7 +123,7 @@ function viewLanding() {
             <label for="join-code">Spielcode:</label>
             <input id="join-code" class="code-input" maxlength="5" placeholder="ABC12" autocomplete="off" spellcheck="false" />
           </div>
-          <div class="name-line" style="margin-top:1.1rem">
+          <div class="name-line">
             <label for="join-name">Dein Name:</label>
             <input id="join-name" class="hand-input" maxlength="20" placeholder="z. B. Melanie" value="${esc(name)}" />
           </div>
@@ -189,26 +209,9 @@ function viewLanding() {
   codeInput.addEventListener('input', () => (codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '')));
 
   let selectedMode = 'kniffel';
-  app.querySelectorAll('.mode-card').forEach((card) => {
-    card.addEventListener('click', () => {
-      app.querySelectorAll('.mode-card').forEach((c) => {
-        c.classList.toggle('selected', c === card);
-        c.setAttribute('aria-checked', c === card ? 'true' : 'false');
-      });
-      selectedMode = card.dataset.mode;
-    });
-  });
-
   let selectedEntry = 'manual';
-  app.querySelectorAll('.style-card').forEach((card) => {
-    card.addEventListener('click', () => {
-      app.querySelectorAll('.style-card').forEach((c) => {
-        c.classList.toggle('selected', c === card);
-        c.setAttribute('aria-checked', c === card ? 'true' : 'false');
-      });
-      selectedEntry = card.dataset.entry;
-    });
-  });
+  bindRadioGroup('.mode-card', (card) => { selectedMode = card.dataset.mode; });
+  bindRadioGroup('.style-card', (card) => { selectedEntry = card.dataset.entry; });
 
   document.getElementById('btn-join').addEventListener('click', async () => {
     const code = codeInput.value.trim();
@@ -270,7 +273,7 @@ function stopPolling() {
 
 async function viewGame(code, spectator) {
   document.title = `Spiel ${code} – Würfelblock`;
-  app.innerHTML = '<p class="muted" style="margin-top:3rem;text-align:center"><span class="spin">🎲</span> Spiel wird geladen …</p>';
+  app.innerHTML = '<p class="muted loading"><span class="spin">🎲</span> Spiel wird geladen …</p>';
   try {
     const data = await api.gameState(code);
     currentGame = { code: data.code, version: data.version, spectator };
@@ -454,11 +457,7 @@ function renderGame(state) {
         <div class="sheet-head"><h2>Analoger Würfelabend</h2><span class="sub">${state.modeName}-Block · Mitspieler können jederzeit dazukommen</span></div>
         <div class="sheet-body">
           ${info}
-          <div class="btn-row" style="justify-content:center">
-            <button class="btn ghost small" id="btn-copycode">Code kopieren</button>
-            <button class="btn ghost small" id="btn-copylink">Einladungslink kopieren</button>
-            <button class="btn ghost small" id="btn-copywatch">Zuschauer-Link kopieren</button>
-          </div>
+          ${shareButtonsHTML(true)}
         </div>
       </section>`;
   } else if (state.status === 'playing' && turn) {
@@ -480,7 +479,7 @@ function renderGame(state) {
     trayHTML = `
       <section class="sheet">
         <div class="sheet-head"><h2>Runde ${state.round}</h2><span class="sub">${state.modeName}-Block</span></div>
-        <div class="sheet-body" style="padding-bottom:0.4rem">
+        <div class="sheet-body compact">
           <p class="tray-info">${info}</p>
           <div class="dice-tray">${diceHTML}</div>
           ${myTurn && turn.rolls > 0 && turn.rolls < 3 ? '<p class="hold-hint">Tipp: Würfel anklicken, um sie festzuhalten.</p>' : ''}
@@ -495,18 +494,13 @@ function renderGame(state) {
         </div>
       </section>`;
   } else if (state.status === 'lobby') {
-    const shareURL = `${location.origin}${location.pathname}#/game/${code}`;
     trayHTML = `
       <section class="sheet">
         <div class="sheet-head"><h2>Warten auf Mitspieler</h2><span class="sub">${state.modeName}-Block</span></div>
         <div class="sheet-body">
-          <p>Teile den Spielcode <strong style="font-family:var(--font-hand);font-size:1.5rem;color:var(--ink);letter-spacing:0.2em">${esc(code)}</strong>
+          <p>Teile den Spielcode <strong class="hand-code">${esc(code)}</strong>
           oder den Link – Mitspieler treten über die Startseite bei.</p>
-          <div class="btn-row">
-            <button class="btn ghost small" id="btn-copycode">Code kopieren</button>
-            <button class="btn ghost small" id="btn-copylink">Einladungslink kopieren</button>
-            <button class="btn ghost small" id="btn-copywatch">Zuschauer-Link kopieren</button>
-          </div>
+          ${shareButtonsHTML()}
           ${
             isPlayer && me === 0
               ? `<div class="btn-row"><button class="btn red big" id="btn-start">Spiel starten (${state.players.length} ${state.players.length === 1 ? 'Spieler' : 'Spieler'})</button></div>
@@ -530,7 +524,7 @@ function renderGame(state) {
               .map((r) => `<li class="${r.place === 1 ? 'first' : ''}"><span class="place">${r.place}.</span><span class="rname">${esc(r.name)}</span><span class="rscore">${r.total} Pkt.</span></li>`)
               .join('')}
           </ol>
-          <div class="btn-row" style="justify-content:center">
+          <div class="btn-row center">
             <a class="btn red" href="#/">Neues Spiel</a>
           </div>
         </div>
@@ -560,7 +554,7 @@ function renderGame(state) {
   app.innerHTML = `
     <div class="game-top">
       <h1>${state.modeName} ${spectator ? '· Zuschauermodus' : ''}</h1>
-      <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap">
+      <div class="game-top-meta">
         ${statusPill}
         <span class="codebadge" title="Spielcode">Code <span class="code">${esc(code)}</span></span>
       </div>
@@ -665,7 +659,7 @@ function openEntryModal(state, cat, current = null) {
     <div class="modal" role="dialog" aria-modal="true" aria-label="${esc(catName)} ${editing ? 'korrigieren' : 'eintragen'}">
       <div class="sheet-head"><h2>${esc(catName)}</h2><span class="sub">${esc(catHint)}</span></div>
       <div class="sheet-body">
-        <p class="muted" style="margin-top:0">${
+        <p class="muted tight">${
           editing
             ? `Aktuell eingetragen: <strong>${current} Punkte</strong>. Neuen Wert wählen:`
             : 'Was hast du gewürfelt? Punkte auswählen:'
@@ -790,7 +784,7 @@ async function viewSettings() {
             <div class="field"><label for="st-display">Anzeigename</label><input type="text" id="st-display" maxlength="20" value="${esc(user.displayName)}" /></div>
             <div class="btn-row"><button class="btn small" type="submit">Speichern</button></div>
           </form>
-          <hr style="border:none;border-top:2px dashed rgba(27,28,32,0.25);margin:1.2rem 0" />
+          <hr class="divider" />
           <form id="pass-form">
             <div class="field"><label for="st-oldpass">Aktuelles Passwort</label><input type="password" id="st-oldpass" autocomplete="current-password" required /></div>
             <div class="field"><label for="st-newpass">Neues Passwort (mind. 8 Zeichen)</label><input type="password" id="st-newpass" autocomplete="new-password" required minlength="8" /></div>
@@ -809,7 +803,7 @@ async function viewSettings() {
       </section>`;
 
   app.innerHTML = `
-    <h1 class="section-title" style="margin-top:2rem">Einstellungen</h1>
+    <h1 class="section-title settings">Einstellungen</h1>
     <div class="settings-grid">
       <div>
         ${accountHTML}
@@ -818,13 +812,13 @@ async function viewSettings() {
         <section class="sheet">
           <div class="sheet-head"><h2>Darstellung</h2><span class="sub">Dein Stift</span></div>
           <div class="sheet-body">
-            <p class="muted" style="margin-top:0">Tintenfarbe für Einträge auf dem Spielbogen:</p>
+            <p class="muted tight">Tintenfarbe für Einträge auf dem Spielbogen:</p>
             <div class="ink-swatches">
               ${Object.entries(INK_COLORS)
                 .map(([key, color]) => `<button type="button" class="ink-swatch${key === inkKey ? ' selected' : ''}" data-ink="${key}" style="background:${color}" aria-label="Tinte ${key}"></button>`)
                 .join('')}
             </div>
-            <p class="scribble" style="margin-top:1rem">So sieht deine Handschrift aus ✎</p>
+            <p class="scribble">So sieht deine Handschrift aus ✎</p>
           </div>
         </section>
       </div>
@@ -898,7 +892,7 @@ async function viewSettings() {
             .join('')
         : '<tr><td colspan="5" class="muted">Noch keine protokollierten Spiele – spiel eine Runde!</td></tr>';
       document.getElementById('history-area').innerHTML = `
-        <h2 class="section-title">Deine Spiele</h2>
+        <h2 class="section-title history">Deine Spiele</h2>
         ${statHTML}
         <section class="sheet"><div class="sheet-body">
           <table class="history">
