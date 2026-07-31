@@ -66,7 +66,8 @@ export const api = {
   changePassword: (oldPassword, newPassword) => call('POST', '/auth/password', { oldPassword, newPassword }),
   history: () => call('GET', '/history'),
 
-  createGame: (mode, name, entry) => call('POST', '/games', { mode, name, entry }),
+  createGame: (mode, name, entry, hostPaper = false) =>
+    call('POST', '/games', { mode, name, entry, hostPaper: !!hostPaper }),
   joinGame: (code, name) => call('POST', `/games/${encodeURIComponent(code)}/join`, { name }),
   gameState: (code, since) => {
     const token = playerTokenFor(code);
