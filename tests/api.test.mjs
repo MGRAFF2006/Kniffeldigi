@@ -237,6 +237,58 @@ assert.equal(res.data.state.status, 'finished', 'Analog: Spiel nach Korrektur wi
 res = await call('POST', `/games/${mCode}/join`, { body: { name: 'Spät' } });
 assert.equal(res.status, 400, 'Analog: kein Beitritt nach Spielende');
 
+// Host kann ohne Neueinladung zurücksetzen – Mitspieler bleiben.
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'reset' }, playerToken: mGuest });
+assert.equal(res.status, 400, 'Analog: nur Host darf resetten');
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'reset' }, playerToken: mHost });
+assert.equal(res.status, 200, 'Analog: Reset durch Host');
+assert.equal(res.data.state.status, 'playing', 'Analog: nach Reset wieder laufend');
+assert.equal(res.data.state.players.length, 2, 'Analog: Mitspieler bleiben nach Reset');
+assert.equal(res.data.state.players[0].scores.ones, null, 'Analog: Punkte geleert');
+assert.ok(res.data.state.log.length > 12, 'Analog: Protokoll unbegrenzt (nicht auf 12 gekürzt)');
+assert.ok(res.data.state.log.every((e) => e.id != null && e.canRevert), 'Analog: Log-Einträge sind revertiertbar');
+
+// Revert auf einen früheren Protokolleintrag.
+const joinLog = res.data.state.log.find((e) => e.text.includes('Peter ist dem Spiel beigetreten'));
+assert.ok(joinLog, 'Analog: Beitritts-Log gefunden');
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'enter', category: 'ones', value: 5 }, playerToken: mHost });
+assert.equal(res.data.state.players[0].scores.ones, 5);
+res = await call('POST', `/games/${mCode}/action`, { body: { type: 'revertLog', logId: joinLog.id }, playerToken: mHost });
+assert.equal(res.status, 200, 'Analog: Revert über Protokoll');
+assert.equal(res.data.state.players[0].scores.ones, null, 'Analog: Stand nach Revert wieder leer');
+
+// ===== Papierblock-Modus (Host trägt für alle ein) =====
+res = await call('POST', '/games', { body: { mode: 'kniffel', name: 'Hostin', hostPaper: true } });
+assert.equal(res.status, 201, 'Papierblock anlegen');
+assert.equal(res.data.state.hostPaper, true, 'Papierblock-Flag gesetzt');
+const pCode = res.data.code;
+const pHost = res.data.playerToken;
+
+res = await call('POST', `/games/${pCode}/action`, { body: { type: 'addSeat', name: 'Oma' }, playerToken: pHost });
+assert.equal(res.status, 200, 'Papierblock: Platz hinzufügen');
+assert.equal(res.data.state.players.length, 2, 'Papierblock: zwei Spieler');
+assert.equal(res.data.state.players[1].name, 'Oma');
+
+res = await call('POST', `/games/${pCode}/action`, {
+  body: { type: 'enter', category: 'ones', value: 3, forPlayer: 1 },
+  playerToken: pHost,
+});
+assert.equal(res.status, 200, 'Papierblock: Host trägt für anderen ein');
+assert.equal(res.data.state.players[1].scores.ones, 3, 'Papierblock: Wert in fremder Spalte');
+
+// Ohne hostPaper darf man nicht für andere eintragen.
+res = await call('POST', '/games', { body: { mode: 'kniffel', name: 'Normal' } });
+const nHost = res.data.playerToken;
+const nCode = res.data.code;
+await call('POST', `/games/${nCode}/join`, { body: { name: 'Gast2' } });
+res = await call('POST', `/games/${nCode}/action`, {
+  body: { type: 'enter', category: 'ones', value: 2, forPlayer: 1 },
+  playerToken: nHost,
+});
+assert.equal(res.status, 400, 'Ohne Papierblock kein Eintrag für andere');
+res = await call('POST', `/games/${nCode}/action`, { body: { type: 'addSeat', name: 'X' }, playerToken: nHost });
+assert.equal(res.status, 400, 'Ohne Papierblock kein Platz hinzufügen');
+
 // --- Einstellungen: Name & Passwort ändern ---
 res = await call('PATCH', '/auth/me', { body: { displayName: 'Neuer Name' }, session });
 assert.equal(res.data.user.displayName, 'Neuer Name', 'Anzeigename geändert');

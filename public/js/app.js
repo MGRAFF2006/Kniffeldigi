@@ -146,6 +146,13 @@ function viewLanding() {
               <span>Die App würfelt rundenbasiert – für Spielrunden über Distanz.</span>
             </button>
           </div>
+          <label class="paper-option" id="host-paper-wrap">
+            <input type="checkbox" id="create-host-paper" />
+            <span>
+              <strong>Als digitaler Papierblock (optional)</strong>
+              <span class="paper-option-hint">Du trägst für alle ein und kannst Mitspieler hinzufügen, die nicht selbst beitreten.</span>
+            </span>
+          </label>
           <div class="name-line">
             <label for="create-name">Dein Name:</label>
             <input id="create-name" class="hand-input" maxlength="20" placeholder="z. B. Peter" value="${esc(name)}" />
@@ -200,6 +207,14 @@ function viewLanding() {
   });
 
   let selectedEntry = 'manual';
+  const hostPaperWrap = document.getElementById('host-paper-wrap');
+  const hostPaperInput = document.getElementById('create-host-paper');
+  const syncHostPaperOption = () => {
+    const show = selectedEntry === 'manual';
+    hostPaperWrap.hidden = !show;
+    if (!show) hostPaperInput.checked = false;
+  };
+  syncHostPaperOption();
   app.querySelectorAll('.style-card').forEach((card) => {
     card.addEventListener('click', () => {
       app.querySelectorAll('.style-card').forEach((c) => {
@@ -207,6 +222,7 @@ function viewLanding() {
         c.setAttribute('aria-checked', c === card ? 'true' : 'false');
       });
       selectedEntry = card.dataset.entry;
+      syncHostPaperOption();
     });
   });
 
@@ -248,7 +264,8 @@ function viewLanding() {
     if (playerName.length < 2) { errEl.textContent = 'Bitte gib deinen Namen ein (mind. 2 Zeichen).'; return; }
     try {
       rememberName(playerName);
-      const data = await api.createGame(selectedMode, playerName, selectedEntry);
+      const hostPaper = selectedEntry === 'manual' && hostPaperInput.checked;
+      const data = await api.createGame(selectedMode, playerName, selectedEntry, hostPaper);
       setPlayerToken(data.code, data.playerToken);
       location.hash = `#/game/${data.code}`;
     } catch (err) {
@@ -341,6 +358,20 @@ function categoryDice(mode, cat) {
   return `<span class="category-dice" aria-hidden="true">${[0, 1, 2].map(() => dieHTML(face)).join('')}</span>`;
 }
 
+/** Eigene Spalte immer zuerst – so findet man den Eintrag sofort. */
+function playerOrder(state) {
+  const indices = state.players.map((_, i) => i);
+  const me = state.you;
+  if (me == null || me < 0) return indices;
+  return [me, ...indices.filter((i) => i !== me)];
+}
+
+function canEditPlayer(state, playerIndex, { manualPick = false } = {}) {
+  if (!manualPick) return false;
+  if (state.you === playerIndex) return true;
+  return !!(state.hostPaper && state.isHost);
+}
+
 function renderScoresheet(state, { digitalPick = false, manualPick = false } = {}) {
   const mode = state.mode;
   const labels = LABELS[mode];
@@ -348,31 +379,37 @@ function renderScoresheet(state, { digitalPick = false, manualPick = false } = {
   const turnIndex = state.turn ? state.turn.player : -1;
   const dice = state.turn ? state.turn.dice : null;
   const me = state.you;
+  const order = playerOrder(state);
+  const playerCount = state.players.length;
 
-  const colgroup = `<colgroup><col class="category-col" /><col class="rule-col" />${state.players
-    .map((_, i) => `<col ${i === turnIndex && state.status === 'playing' ? 'class="turncol"' : ''} />`)
+  const colgroup = `<colgroup><col class="category-col" /><col class="rule-col" />${order
+    .map((pi) => `<col class="player-col${pi === turnIndex && state.status === 'playing' ? ' turncol' : ''}${pi === me ? ' me-col' : ''}" />`)
     .join('')}</colgroup>`;
 
   const header = `<thead><tr>
     <th class="sheet-corner" colspan="2">${state.modeName}-Block</th>
-    ${state.players.map((p, i) => `<th class="${i === me ? 'me' : ''}" title="${esc(p.name)}"><span class="game-number">Spiel ${i + 1}</span><span class="player-name">${esc(p.name)}${i === me ? ' (du)' : ''}</span></th>`).join('')}
+    ${order.map((pi, col) => {
+      const p = state.players[pi];
+      return `<th class="${pi === me ? 'me' : ''}" title="${esc(p.name)}"><span class="game-number">Spiel ${col + 1}</span><span class="player-name">${esc(p.name)}${pi === me ? ' (du)' : ''}</span></th>`;
+    }).join('')}
   </tr></thead>`;
 
   const bodyRows = rows.map((row) => {
     if (row.type === 'section') {
-      return `<tr class="section"><th colspan="${state.players.length + 2}">${row.label}</th></tr>`;
+      return `<tr class="section"><th colspan="${playerCount + 2}">${row.label}</th></tr>`;
     }
     if (row.type === 'calc') {
-      const cells = state.players
-        .map((p, i) => {
+      const cells = order
+        .map((pi) => {
+          const p = state.players[pi];
           // Analogmodus, Kniffel: weiteren Kniffel als Bonus verbuchen / zurücknehmen.
           let bonusBtn = '';
-          if (row.key === 'extraBonus' && manualPick && i === me) {
+          if (row.key === 'extraBonus' && canEditPlayer(state, pi, { manualPick })) {
             if (p.scores.kniffel === 50) {
-              bonusBtn += ' <button type="button" class="bonus-btn" id="btn-extrabonus" title="Noch ein Kniffel gewürfelt? +50 Bonuspunkte">+50</button>';
+              bonusBtn += ` <button type="button" class="bonus-btn" data-extra-bonus="${pi}" title="Noch ein Kniffel gewürfelt? +50 Bonuspunkte">+50</button>`;
             }
             if (p.extraYahtzees > 0) {
-              bonusBtn += ' <button type="button" class="bonus-btn" id="btn-extrabonus-minus" title="Einen Kniffel-Bonus zurücknehmen">↺</button>';
+              bonusBtn += ` <button type="button" class="bonus-btn" data-extra-bonus-minus="${pi}" title="Einen Kniffel-Bonus zurücknehmen">−50</button>`;
             }
           }
           return `<td class="val">${p.totals[row.key]}${bonusBtn}</td>`;
@@ -388,23 +425,25 @@ function renderScoresheet(state, { digitalPick = false, manualPick = false } = {
     }
     // Kategorie-Zeile
     const [catName, catHint] = labels[row.cat];
-    const cells = state.players
-      .map((p, i) => {
+    const cells = order
+      .map((pi) => {
+        const p = state.players[pi];
+        const editable = canEditPlayer(state, pi, { manualPick });
         const score = p.scores[row.cat];
         if (typeof score === 'number') {
           const shown = score === 0 ? '<span class="strike">0</span>' : score;
-          if (manualPick && i === me) {
-            return `<td class="val own-edit${score === 0 ? ' zero' : ''}" data-cat="${row.cat}" data-current="${score}" role="button" tabindex="0" title="${catName} ändern oder rückgängig machen">${shown}</td>`;
+          if (editable) {
+            return `<td class="val own-edit${score === 0 ? ' zero' : ''}" data-cat="${row.cat}" data-player="${pi}" data-current="${score}" role="button" tabindex="0" title="${catName} ändern oder rückgängig machen">${shown}</td>`;
           }
           return `<td class="val${score === 0 ? ' zero' : ''}">${shown}</td>`;
         }
-        if (digitalPick && i === me && dice) {
+        if (digitalPick && pi === me && dice) {
           const joker = jokerApplies(mode, dice, state.players[me].scores);
           const preview = scoreCategory(mode, row.cat, dice, joker);
           return `<td class="val pick" data-cat="${row.cat}" role="button" tabindex="0" title="Hier eintragen: ${preview} Punkte">${preview}</td>`;
         }
-        if (manualPick && i === me) {
-          return `<td class="val pick manual" data-cat="${row.cat}" role="button" tabindex="0" title="${catName} eintragen">✎</td>`;
+        if (editable) {
+          return `<td class="val pick manual" data-cat="${row.cat}" data-player="${pi}" role="button" tabindex="0" title="${catName} eintragen">✎</td>`;
         }
         return `<td class="val"></td>`;
       })
@@ -412,7 +451,7 @@ function renderScoresheet(state, { digitalPick = false, manualPick = false } = {
     return `<tr><th class="cat"><span class="catname">${catName}</span>${categoryDice(mode, row.cat)}</th><td class="rulenote">${catHint}</td>${cells}</tr>`;
   });
 
-  return `<div class="score-wrap"><table class="scoresheet">${colgroup}${header}<tbody>${bodyRows.join('')}</tbody></table></div>`;
+  return `<div class="score-wrap"><table class="scoresheet" style="--player-cols:${playerCount}">${colgroup}${header}<tbody>${bodyRows.join('')}</tbody></table></div>`;
 }
 
 function filledCount(player) {
@@ -443,15 +482,21 @@ function renderGame(state) {
   let trayHTML = '';
   if (manual && state.status === 'playing') {
     const myMissing = isPlayer ? totalCats - filledCount(state.players[me]) : null;
-    const info = !isPlayer
+    let info = !isPlayer
       ? '<p class="tray-info">Hier wird analog gewürfelt – die Spieler tragen ihre Punkte selbst ein.</p>'
       : myMissing === 0
         ? '<p class="tray-info">✔ Dein Bogen ist voll! Warte, bis die anderen fertig sind.</p>'
         : `<p class="tray-info">Würfle am Tisch und trage dein Ergebnis über die <strong>✎-Felder</strong> in deiner Spalte ein.<br />
            Dir ${myMissing === 1 ? 'fehlt noch <strong>1 Feld</strong>' : `fehlen noch <strong>${myMissing} von ${totalCats} Feldern`}</strong>.</p>`;
+    const analogSub = state.hostPaper
+      ? `${state.modeName}-Block · digitaler Papierblock`
+      : `${state.modeName}-Block · Mitspieler können jederzeit dazukommen`;
+    if (state.hostPaper && isPlayer && state.isHost) {
+      info = `<p class="tray-info">Papierblock: Trage die Ergebnisse für alle Spalten ein${state.players.length < 8 ? ' und füge fehlende Mitspieler rechts hinzu' : ''}.</p>`;
+    }
     trayHTML = `
       <section class="sheet">
-        <div class="sheet-head"><h2>Analoger Würfelabend</h2><span class="sub">${state.modeName}-Block · Mitspieler können jederzeit dazukommen</span></div>
+        <div class="sheet-head"><h2>Analoger Würfelabend</h2><span class="sub">${analogSub}</span></div>
         <div class="sheet-body">
           ${info}
           <div class="btn-row" style="justify-content:center">
@@ -531,15 +576,41 @@ function renderGame(state) {
               .join('')}
           </ol>
           <div class="btn-row" style="justify-content:center">
-            <a class="btn red" href="#/">Neues Spiel</a>
+            ${state.isHost ? '<button type="button" class="btn red" id="btn-reset">Noch einmal (Mitspieler behalten)</button>' : ''}
+            <a class="btn ghost" href="#/">Zur Startseite</a>
           </div>
         </div>
       </section>`;
   }
 
+  // Host-Steuerung: Reset während des Spiels + Papierblock-Mitspieler
+  let hostToolsHTML = '';
+  if (isPlayer && state.isHost) {
+    const seatForm = state.hostPaper && state.status !== 'finished' && state.players.length < 8
+      ? `<div class="add-seat">
+           <input id="seat-name" class="hand-input" maxlength="20" placeholder="Name hinzufügen" />
+           <button type="button" class="btn small" id="btn-add-seat">Platz hinzufügen</button>
+         </div>`
+      : '';
+    const showReset = state.status === 'playing';
+    if (state.hostPaper || showReset) {
+      hostToolsHTML = `
+        <section class="sheet">
+          <div class="sheet-head"><h2>Host</h2><span class="sub">${state.hostPaper ? 'Papierblock' : 'Spielleitung'}</span></div>
+          <div class="sheet-body">
+            ${state.hostPaper ? '<p class="muted" style="margin-top:0">Du kannst alle Spalten ausfüllen und Mitspieler ohne eigenen Beitritt eintragen.</p>' : ''}
+            ${seatForm}
+            ${showReset ? '<div class="btn-row"><button type="button" class="btn ghost small" id="btn-reset">Neues Spiel (Mitspieler behalten)</button></div>' : ''}
+          </div>
+        </section>`;
+    }
+  }
+
   // --- Seitenleiste ---
-  const playersHTML = state.players
-    .map((p, i) => {
+  const order = playerOrder(state);
+  const playersHTML = order
+    .map((i) => {
+      const p = state.players[i];
       const tags = [];
       if (i === 0) tags.push('<span class="tag">Host</span>');
       if (state.status === 'playing' && turn && turn.player === i) tags.push('<span class="tag turn">am Zug</span>');
@@ -554,12 +625,17 @@ function renderGame(state) {
 
   const logHTML = [...state.log]
     .reverse()
-    .map((entry) => `<li>${esc(entry.text)}</li>`)
+    .map((entry) => {
+      const revert = isPlayer && entry.canRevert && entry.id != null
+        ? `<button type="button" class="log-revert" data-log-id="${entry.id}" title="Auf diesen Stand zurücksetzen">↺</button>`
+        : '';
+      return `<li><span class="log-text">${esc(entry.text)}</span>${revert}</li>`;
+    })
     .join('');
 
   app.innerHTML = `
     <div class="game-top">
-      <h1>${state.modeName} ${spectator ? '· Zuschauermodus' : ''}</h1>
+      <h1>${state.modeName} ${spectator ? '· Zuschauermodus' : ''}${state.hostPaper && !spectator ? ' · Papierblock' : ''}</h1>
       <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap">
         ${statusPill}
         <span class="codebadge" title="Spielcode">Code <span class="code">${esc(code)}</span></span>
@@ -572,12 +648,13 @@ function renderGame(state) {
         ${renderScoresheet(state, { digitalPick: canPick, manualPick })}
       </div>
       <aside class="side-panel">
+        ${hostToolsHTML}
         <section class="sheet">
           <div class="sheet-head"><h2>Spieler</h2><span class="sub">${state.players.length}/8</span></div>
           <div class="sheet-body"><ul class="player-list">${playersHTML || '<li class="muted">Noch niemand da.</li>'}</ul></div>
         </section>
         <section class="sheet">
-          <div class="sheet-head"><h2>Protokoll</h2></div>
+          <div class="sheet-head"><h2>Protokoll</h2><span class="sub">${state.log.length} Einträge</span></div>
           <div class="sheet-body"><ul class="gamelog">${logHTML || '<li>Noch nichts passiert.</li>'}</ul></div>
         </section>
       </aside>
@@ -612,23 +689,59 @@ function renderGame(state) {
   });
 
   app.querySelectorAll('td.val.pick, td.val.own-edit').forEach((el) => {
+    const forPlayer = el.dataset.player != null ? Number(el.dataset.player) : state.you;
     const pick = el.classList.contains('own-edit')
-      ? () => openEntryModal(state, el.dataset.cat, Number(el.dataset.current))
+      ? () => openEntryModal(state, el.dataset.cat, Number(el.dataset.current), forPlayer)
       : el.classList.contains('manual')
-        ? () => openEntryModal(state, el.dataset.cat)
+        ? () => openEntryModal(state, el.dataset.cat, null, forPlayer)
         : () => doAction({ type: 'score', category: el.dataset.cat });
     el.addEventListener('click', pick);
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
   });
 
-  const bonusBtn = document.getElementById('btn-extrabonus');
-  if (bonusBtn) bonusBtn.addEventListener('click', () => {
-    if (confirm('Weiteren Kniffel gewürfelt? +50 Bonuspunkte werden verbucht.')) doAction({ type: 'extraBonus' });
+  app.querySelectorAll('[data-extra-bonus]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const forPlayer = Number(btn.dataset.extraBonus);
+      if (confirm('Weiteren Kniffel gewürfelt? +50 Bonuspunkte werden verbucht.')) {
+        doAction({ type: 'extraBonus', ...(forPlayer !== state.you ? { forPlayer } : {}) });
+      }
+    });
   });
-  const bonusMinusBtn = document.getElementById('btn-extrabonus-minus');
-  if (bonusMinusBtn) bonusMinusBtn.addEventListener('click', () => {
-    if (confirm('Einen Kniffel-Bonus (+50) zurücknehmen?')) doAction({ type: 'extraBonus', remove: true });
+  app.querySelectorAll('[data-extra-bonus-minus]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const forPlayer = Number(btn.dataset.extraBonusMinus);
+      if (confirm('Einen Kniffel-Bonus (+50) zurücknehmen?')) {
+        doAction({ type: 'extraBonus', remove: true, ...(forPlayer !== state.you ? { forPlayer } : {}) });
+      }
+    });
   });
+
+  app.querySelectorAll('.log-revert').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (confirm('Spielstand auf diesen Protokolleintrag zurücksetzen? Spätere Einträge bleiben im Protokoll stehen.')) {
+        doAction({ type: 'revertLog', logId: Number(btn.dataset.logId) });
+      }
+    });
+  });
+
+  const resetBtns = app.querySelectorAll('#btn-reset');
+  resetBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (confirm('Neues Spiel starten? Alle Punkte werden geleert – die Mitspieler bleiben im Block.')) {
+        doAction({ type: 'reset' });
+      }
+    });
+  });
+
+  const addSeatBtn = document.getElementById('btn-add-seat');
+  if (addSeatBtn) {
+    addSeatBtn.addEventListener('click', () => {
+      const input = document.getElementById('seat-name');
+      const seatName = (input && input.value.trim()) || '';
+      if (seatName.length < 2) { toast('Bitte einen Namen mit mind. 2 Zeichen eingeben.', true); return; }
+      doAction({ type: 'addSeat', name: seatName });
+    });
+  }
 }
 
 // ===== Analogmodus: Eingabe-Dialog =====
@@ -638,12 +751,16 @@ function closeEntryModal() {
   if (el) el.remove();
 }
 
-function openEntryModal(state, cat, current = null) {
+function openEntryModal(state, cat, current = null, forPlayer = null) {
   closeEntryModal();
   const [catName, catHint] = LABELS[state.mode][cat];
   const options = manualScoreOptions(state.mode, cat);
   const values = options.choices || options.set;
   const editing = current !== null;
+  const targetIndex = forPlayer == null ? state.you : forPlayer;
+  const targetName = state.players[targetIndex]?.name || '';
+  const forOther = targetIndex !== state.you;
+  const targetOpts = forOther ? { forPlayer: targetIndex } : {};
 
   const body = values
     ? `<div class="chip-grid">
@@ -663,12 +780,14 @@ function openEntryModal(state, cat, current = null) {
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal" role="dialog" aria-modal="true" aria-label="${esc(catName)} ${editing ? 'korrigieren' : 'eintragen'}">
-      <div class="sheet-head"><h2>${esc(catName)}</h2><span class="sub">${esc(catHint)}</span></div>
+      <div class="sheet-head"><h2>${esc(catName)}</h2><span class="sub">${esc(catHint)}${forOther ? ` · ${esc(targetName)}` : ''}</span></div>
       <div class="sheet-body">
         <p class="muted" style="margin-top:0">${
           editing
-            ? `Aktuell eingetragen: <strong>${current} Punkte</strong>. Neuen Wert wählen:`
-            : 'Was hast du gewürfelt? Punkte auswählen:'
+            ? `Aktuell eingetragen: <strong>${current} Punkte</strong>${forOther ? ` (${esc(targetName)})` : ''}. Neuen Wert wählen:`
+            : forOther
+              ? `Punkte für <strong>${esc(targetName)}</strong> auswählen:`
+              : 'Was hast du gewürfelt? Punkte auswählen:'
         }</p>
         ${body}
         <div class="btn-row">
@@ -681,12 +800,12 @@ function openEntryModal(state, cat, current = null) {
 
   const submit = (value) => {
     closeEntryModal();
-    doAction({ type: 'enter', category: cat, value, overwrite: editing });
+    doAction({ type: 'enter', category: cat, value, overwrite: editing, ...targetOpts });
   };
   const clearBtn = overlay.querySelector('#entry-clear');
   if (clearBtn) clearBtn.addEventListener('click', () => {
     closeEntryModal();
-    doAction({ type: 'clear', category: cat });
+    doAction({ type: 'clear', category: cat, ...targetOpts });
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeEntryModal(); });
   overlay.querySelector('#entry-cancel').addEventListener('click', closeEntryModal);

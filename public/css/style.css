@@ -410,10 +410,9 @@ td.val.pick:hover::after { content: '✎'; position: absolute; right: 6px; font-
 td.val.pick.manual { font-family: var(--font-ui); font-size: 0.95rem; font-style: normal; color: var(--pencil); }
 td.val.pick.manual:hover::after { content: ''; }
 
-/* Analogmodus: eigene ausgefüllte Felder können korrigiert werden */
+/* Analogmodus: eigene ausgefüllte Felder können korrigiert werden (Revert nur im Dialog) */
 td.val.own-edit { cursor: pointer; position: relative; }
 td.val.own-edit:hover { background: var(--marker); }
-td.val.own-edit:hover::after { content: '↺'; position: absolute; right: 5px; top: 50%; translate: 0 -50%; font-size: 0.75rem; color: var(--line); }
 
 .bonus-btn {
   font: 800 0.65rem var(--font-ui);
@@ -487,8 +486,49 @@ td.val.own-edit:hover::after { content: '↺'; position: absolute; right: 5px; t
 .player-list .tag { font-size: 0.65rem; font-weight: 800; text-transform: uppercase; border: 1.5px solid var(--line); border-radius: 999px; padding: 0.1rem 0.5rem; }
 .player-list .tag.turn { background: var(--marker); }
 
-.gamelog { list-style: none; margin: 0; padding: 0; font-size: 0.8rem; color: #555a63; max-height: 240px; overflow-y: auto; }
-.gamelog li { padding: 0.3rem 0; border-bottom: 1px dashed rgba(27, 28, 32, 0.15); }
+.gamelog { list-style: none; margin: 0; padding: 0; font-size: 0.8rem; color: #555a63; max-height: min(70vh, 520px); overflow-y: auto; }
+.gamelog li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px dashed rgba(27, 28, 32, 0.15);
+}
+.gamelog .log-text { flex: 1; min-width: 0; }
+.log-revert {
+  flex: none;
+  border: 1.5px solid var(--line);
+  background: transparent;
+  color: var(--line);
+  font: 700 0.75rem var(--font-ui);
+  line-height: 1;
+  padding: 0.15rem 0.35rem;
+  cursor: pointer;
+}
+.log-revert:hover { background: var(--marker); }
+
+.paper-option {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  margin: 0 0 1.1rem;
+  padding: 0.7rem 0.8rem;
+  border: 1.5px dashed rgba(27, 28, 32, 0.35);
+  cursor: pointer;
+}
+.paper-option[hidden] { display: none; }
+.paper-option input { margin-top: 0.25rem; }
+.paper-option strong { display: block; font-size: 0.9rem; }
+.paper-option-hint { display: block; margin-top: 0.2rem; font-size: 0.78rem; color: #6a6e78; line-height: 1.35; }
+
+.add-seat {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+}
+.add-seat .hand-input { flex: 1; min-width: 120px; }
 
 /* Ergebnis */
 .result-banner { text-align: center; padding: 1.6rem 1rem; }
@@ -1349,22 +1389,30 @@ main {
 
 .score-wrap {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   padding-bottom: 2px;
 }
 
 table.scoresheet {
-  width: 100%;
+  /* Festbreite der Spielerspalten → horizontal scrollen statt Quetschen */
+  --player-col-width: 72px;
+  width: max-content;
+  min-width: 100%;
   table-layout: fixed;
   border: 2px solid var(--line);
   background: #fff;
 }
 
 .scoresheet col.category-col {
-  width: 27%;
+  width: 148px;
 }
 
 .scoresheet col.rule-col {
-  width: 18%;
+  width: 96px;
+}
+
+.scoresheet col.player-col {
+  width: var(--player-col-width);
 }
 
 .scoresheet th,
@@ -1543,12 +1591,16 @@ table.scoresheet {
     gap: 20px;
   }
 
+  table.scoresheet {
+    --player-col-width: 54px;
+  }
+
   .scoresheet col.category-col {
-    width: 34%;
+    width: 112px;
   }
 
   .scoresheet col.rule-col {
-    width: 22%;
+    width: 72px;
   }
 
   .scoresheet th,
