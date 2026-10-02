@@ -9,12 +9,14 @@ export async function onRequestPost({ request, env }) {
   const mode = String(body.mode || '');
   if (!MODES[mode]) return apiError('Unbekannter Spielmodus. Verfügbar: kniffel, yatzy');
   const entry = body.entry === 'digital' ? 'digital' : 'manual';
+  // Papierblock-Modus: Host trägt für alle ein und kann Plätze hinzufügen (nur Analog, opt-in).
+  const hostPaper = entry === 'manual' && body.hostPaper === true;
 
   const user = await getUser(env, request);
   const name = validName(body.name || (user && user.display_name));
   if (!name) return apiError('Spielername: 2–20 Zeichen.');
 
-  const game = await createGame(env, mode, entry);
+  const game = await createGame(env, mode, entry, { hostPaper });
   const player = addPlayer(game.state, name, user && user.id);
   await saveGame(env, game);
 

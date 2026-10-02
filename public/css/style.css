@@ -647,19 +647,32 @@ button.die:hover:not(:disabled) { translate: 0 -3px; }
 
 .score-wrap {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   padding-bottom: 2px;
 }
 
 table.scoresheet {
-  width: 100%;
+  /* Festbreite der Spielerspalten → horizontal scrollen statt Quetschen */
+  --player-col-width: 72px;
+  width: max-content;
+  min-width: 100%;
   table-layout: fixed;
   border-collapse: collapse;
   border: 2px solid var(--line);
   background: #fff;
 }
 
-.scoresheet col.category-col { width: 27%; }
-.scoresheet col.rule-col { width: 18%; }
+.scoresheet col.category-col {
+  width: 148px;
+}
+
+.scoresheet col.rule-col {
+  width: 96px;
+}
+
+.scoresheet col.player-col {
+  width: var(--player-col-width);
+}
 
 .scoresheet th,
 .scoresheet td {
@@ -822,16 +835,6 @@ td.val.pick.manual {
 td.val.pick.manual:hover::after { content: ''; }
 
 td.val.own-edit { cursor: pointer; position: relative; }
-
-td.val.own-edit:hover::after {
-  content: '↺';
-  position: absolute;
-  right: 5px;
-  top: 50%;
-  translate: 0 -50%;
-  font-size: 0.75rem;
-  color: var(--line);
-}
 
 .bonus-btn {
   margin-left: 0.35rem;
@@ -996,7 +999,7 @@ td.val.own-edit:hover::after {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 240px;
+  max-height: min(70vh, 520px);
   overflow-y: auto;
   color: #555a63;
   font-size: 0.68rem;
@@ -1004,9 +1007,48 @@ td.val.own-edit:hover::after {
 }
 
 .gamelog li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
   padding: 4px 0;
   border-bottom: 1px dashed rgba(27, 28, 32, 0.15);
 }
+
+.gamelog .log-text { flex: 1; min-width: 0; }
+.log-revert {
+  flex: none;
+  border: 1.5px solid var(--line);
+  background: transparent;
+  color: var(--line);
+  font: 700 0.75rem var(--font-ui);
+  line-height: 1;
+  padding: 0.15rem 0.35rem;
+  cursor: pointer;
+}
+.log-revert:hover { background: var(--marker); }
+
+.paper-option {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  margin: 0 0 1.1rem;
+  padding: 0.7rem 0.8rem;
+  border: 1.5px dashed rgba(27, 28, 32, 0.35);
+  cursor: pointer;
+}
+.paper-option[hidden] { display: none; }
+.paper-option input { margin-top: 0.25rem; }
+.paper-option strong { display: block; font-size: 0.9rem; }
+.paper-option-hint { display: block; margin-top: 0.2rem; font-size: 0.78rem; color: #6a6e78; line-height: 1.35; }
+
+.add-seat {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+}
+.add-seat .hand-input { flex: 1; min-width: 120px; }
 
 /* ===== Ergebnis ===== */
 
@@ -1229,8 +1271,17 @@ table.history {
     gap: 20px;
   }
 
-  .scoresheet col.category-col { width: 34%; }
-  .scoresheet col.rule-col { width: 22%; }
+  table.scoresheet {
+    --player-col-width: 54px;
+  }
+
+  .scoresheet col.category-col {
+    width: 112px;
+  }
+
+  .scoresheet col.rule-col {
+    width: 72px;
+  }
 
   .scoresheet th,
   .scoresheet td {
