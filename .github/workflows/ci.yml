@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    if: vars.CI_RUNNER != ''
+    runs-on: ${{ vars.CI_RUNNER }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - name: Test rules
+        run: node tests/rules.test.mjs
+      - name: Test API
+        run: |
+          npm run dev > /tmp/wuerfelblock-dev.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in {1..30}; do
+            curl --fail --silent http://127.0.0.1:8788/ >/dev/null && break
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              cat /tmp/wuerfelblock-dev.log
+              exit 1
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8788/ >/dev/null
+          node tests/api.test.mjs

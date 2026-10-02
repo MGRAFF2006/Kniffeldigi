@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.svg" alt="Würfelblock" width="420">
+</p>
+
 # Würfelblock – Kniffel & Yatzy, analog würfeln, digital eintragen
 
 Der digitale Würfelblock: Ihr spielt **Kniffel** oder **Yatzy** mit echten Würfeln am Tisch –
