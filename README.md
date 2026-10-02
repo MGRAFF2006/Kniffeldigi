@@ -2,80 +2,95 @@
   <img src="docs/logo.svg" alt="Würfelblock" width="420">
 </p>
 
-# Würfelblock – Kniffel & Yatzy, analog würfeln, digital eintragen
+# 🎲 Würfelblock
 
-Der digitale Würfelblock: Ihr spielt **Kniffel** oder **Yatzy** mit echten Würfeln am Tisch –
-der Block wird digital geführt. Mitspieler treten per Spielcode bei, tragen Punkte am eigenen
-Handy ein und sehen live, was den anderen noch fehlt. Summen, Bonus und Endstand rechnet die
-App. Optional kann auch komplett digital gewürfelt werden.
+**Echte Würfel. Ein gemeinsamer digitaler Block.**
 
-Läuft auf **Cloudflare** (Worker + statische Assets + D1).
+Ihr spielt Kniffel oder Yatzy am Tisch, teilt einen Spielcode und tragt eure Punkte am eigenen Handy ein. Alle sehen den gemeinsamen Spielstand; Summen, Bonus und Rangliste berechnet die App. Für eine Runde über Distanz gibt es auch einen digitalen Würfelmodus.
 
-## Features
+Vanilla JavaScript im Browser, ein **Cloudflare Worker** für die API und **D1** für die Daten. Kein Frontend-Build nötig.
 
-- **Analogmodus:** Spiel erstellen, Code teilen, Mitspieler kommen jederzeit dazu. Unmögliche
-  Werte werden serverseitig abgelehnt. Das Spiel endet, sobald alle Bögen voll sind.
-- **Korrekturen:** Eigene Einträge ändern oder rückgängig machen; Kniffel-Bonus (+50) per Knopf.
-- **Digitalmodus:** Rundenbasiertes Würfeln mit Festhalten, 3 Würfen und Jokerregel.
-- **Zwei Bögen:** Kniffel und Yatzy mit den jeweiligen Originalregeln.
-- **Live zuschauen:** `/#/watch/CODE` – ohne Anmeldung.
-- **Konten & Historie:** Registrierung/Login, Siege, Bestwerte, Durchschnitt.
-- **Einstellungen:** Anzeigename, Passwort, Tintenfarbe der „Handschrift“.
+## Eine Runde spielen
 
-## Projektstruktur
+1. Spiel erstellen und **Kniffel** oder **Yatzy** auswählen.
+2. Den Spielcode mit den Mitspielern teilen.
+3. Mit echten Würfeln spielen und die Punkte auf dem eigenen Bogen eintragen.
 
-```
-public/               Statisches Frontend (SPA, Vanilla JS, Hash-Routing)
-  js/rules.js         Wertungs-/Validierungslogik (eine Quelle für Client & Server)
-functions/api/        API-Handler (Pages-Functions-Format, vom Worker gemappt)
-  _lib/rules.js       Re-Export von public/js/rules.js
-  _lib/game.js        Spiel-Engine (Züge, Validierung, Persistenz)
-  _lib/schema.js      D1-Schema (Bootstrap beim ersten Request)
-src/worker.js         Worker-Einstieg: Assets + API-Routing
-schema.sql            Schema-Referenz für manuelle D1-Migrationen
-tests/                Unit-Tests (Regeln) + API-E2E + optionales Screenshot-Skript
-```
+Ein Zuschauer-Link (`/#/watch/CODE`) zeigt den Spielstand ohne Anmeldung.
 
-Live-Updates über leichtes Polling (`GET /api/games/CODE/state?since=VERSION` → `204` wenn
-unverändert) – ohne Websockets, im kostenlosen Tarif nutzbar.
+## Was der Block kann
 
-## Lokal entwickeln
+- **Gemeinsam spielen:** Jeder führt seinen eigenen Bogen; ausgefüllte Felder und Spielstände werden laufend aktualisiert.
+- **Richtig rechnen:** Serverseitige Wertungsprüfung, automatische Summen, Bonuspunkte und Abschluss, sobald alle Bögen voll sind.
+- **Einträge korrigieren:** Punkte ändern oder zurücknehmen, auch nach Spielende. Rangliste und protokollierte Ergebnisse werden neu berechnet.
+- **Digital würfeln:** Drei Würfe pro Zug, Würfel festhalten, Krypto-Zufall und Kniffel-Jokerregel.
+- **Konten und Historie:** Siege, Bestwerte und vergangene Ergebnisse für eingeloggte Spieler; Anzeigename, Passwort und Tintenfarbe sind einstellbar.
+- **Papier statt Dashboard:** Ein klassischer Wertungsblock mit handschriftlichen Namen und klar getrennten Spielerspalten.
+
+Live-Updates verwenden leichtgewichtiges Polling. Hat sich seit der letzten Version nichts geändert, antwortet die API mit `204`; WebSockets sind dafür nicht nötig.
+
+## Lokal starten
+
+Voraussetzung: Node.js mit npm.
 
 ```bash
-npm install
-npm run dev          # http://localhost:8788 (lokale D1 wird automatisch angelegt)
-npm test             # Regel-Unit-Tests + API-E2E (Dev-Server muss laufen)
+git clone https://github.com/MGRAFF2006/Kniffeldigi.git
+cd Kniffeldigi
+npm ci
+npm run dev
+```
+
+Öffne <http://localhost:8788>. Die lokale D1-Datenbank wird automatisch angelegt.
+
+In einem zweiten Terminal, während der Dev-Server läuft:
+
+```bash
+npm test
+```
+
+Das führt die Regeltests und den API-End-to-End-Test aus. Nur die Regeltests:
+
+```bash
+node tests/rules.test.mjs
 ```
 
 ## Auf Cloudflare deployen
 
-Cloudflare Worker mit statischen Assets – passend zur Git-Integration
-(*Workers & Pages → Create → Workers → Connect to Git*), Deploy-Kommando: `npx wrangler deploy`.
+1. Mit `npx wrangler login` anmelden und mit `npm run db:create` eine eigene D1-Datenbank erstellen.
+2. Die zurückgegebene `database_id` in `wrangler.toml` eintragen. Die vorhandene ID gehört zur ursprünglichen Bereitstellung.
+3. Mit `npm run deploy` den Worker samt statischen Assets veröffentlichen.
 
-1. **D1 anlegen** (einmalig): Dashboard *Storage & Databases → D1 → Create*, Name
-   `wuerfelblock-db` – oder `npx wrangler login && npm run db:create`. Die `database_id` in
-   `wrangler.toml` eintragen und committen.
-2. **Deployen:** Git-Integration (Deploy: `npx wrangler deploy`) oder `npm run deploy`.
+Das Datenbankschema wird beim ersten API-Request angelegt. Alternativ kann es vorab mit `npx wrangler d1 execute wuerfelblock-db --remote --file=schema.sql` erstellt werden.
 
-Schema wird beim ersten API-Request angelegt. Optional manuell:
-`npx wrangler d1 execute wuerfelblock-db --remote --file=schema.sql`.
+Für automatische Deployments das Repository über die Git-Integration im Cloudflare-Dashboard mit einem Worker verbinden: kein Build-Kommando, Deploy-Kommando `npx wrangler deploy`.
 
-> Die Handler liegen im `functions/`-Ordner im Pages-Functions-Format. Ein klassisches
-> Pages-Projekt (Ausgabe: `public`) geht ebenfalls, dann D1-Binding `DB` manuell setzen.
+Die Handler unter `functions/api/` bleiben mit Pages Functions kompatibel. Bei einer Bereitstellung als Cloudflare Pages muss das D1-Binding `DB` in den Projekteinstellungen gesetzt werden; das Ausgabeverzeichnis ist `public`.
 
-## Regeln im Detail
+## Im Code
+
+| Pfad | Aufgabe |
+| :--- | :--- |
+| `public/` | Statisches Frontend mit Hash-Routing |
+| `public/js/rules.js` | Gemeinsame Wertungs- und Validierungslogik für Client und Server |
+| `functions/api/_lib/rules.js` | Re-Export der gemeinsamen Regeln für die API |
+| `functions/api/_lib/game.js` | Spielzustand, Züge und Persistenz |
+| `functions/api/_lib/schema.js` | D1-Schema und Bootstrap beim ersten Request |
+| `src/worker.js` | Worker-Einstiegspunkt und API-Routing |
+| `schema.sql` | D1-Schema |
+| `tests/` | Regeltests, API-Test und Screenshot-Skript |
+
+## Kniffel und Yatzy im Vergleich
 
 | | Kniffel | Yatzy |
-|---|---|---|
+| :--- | :--- | :--- |
 | Felder | 13 | 15 |
 | Bonus oben | +35 ab 63 | +50 ab 63 |
 | Paare | – | Ein Paar / Zwei Paare (Augensumme) |
 | Pasche | Summe **aller** Würfel | Summe **nur** der gleichen Würfel |
-| Kleine Straße | 4 in Folge · 30 Punkte | exakt 1-2-3-4-5 · 15 Punkte |
-| Große Straße | 5 in Folge · 40 Punkte | exakt 2-3-4-5-6 · 20 Punkte |
+| Kleine Straße | 4 in Folge · 30 Punkte | exakt 1–2–3–4–5 · 15 Punkte |
+| Große Straße | 5 in Folge · 40 Punkte | exakt 2–3–4–5–6 · 20 Punkte |
 | Full House | 25 Punkte fest | Summe aller Würfel |
 | 5 Gleiche | Kniffel · 50 | Yatzy · 50 |
 | Extra | Jeder weitere Kniffel +50 (Jokerregel) | – |
 
-Kniffel-Jokerregel (Digitalmodus): Ein weiterer Kniffel gibt +50 und darf als Joker in ein
-freies Feld. Im Analogmodus gibt es den „+50“-Knopf in der Kniffel-Bonus-Zeile.
+Im Digitalmodus gibt ein weiterer Kniffel +50 Bonuspunkte und darf als Joker in ein freies Feld eingetragen werden: Full House 25, Straßen 30/40, sonst normale Wertung. Im Analogmodus gibt es dafür den „+50“-Knopf in der Kniffel-Bonus-Zeile; auch diese Boni lassen sich zurücknehmen.
