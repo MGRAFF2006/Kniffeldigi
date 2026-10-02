@@ -1,5 +1,6 @@
-// Client-Kopie der Regel-Logik (Vorschau der möglichen Punkte) + deutsche Beschriftungen.
-// Die maßgebliche Wertung passiert immer auf dem Server (functions/api/_lib/rules.js).
+// Wertungs- und Validierungslogik für Kniffel & Yatzy.
+// Eine Quelle für Client (UI-Vorschau) und Server (maßgebliche Prüfung).
+// Server-Einstieg: functions/api/_lib/rules.js re-exportiert diese Datei.
 
 export const MODES = {
   kniffel: {
@@ -20,6 +21,7 @@ export const MODES = {
   },
 };
 
+/** Deutsche Beschriftungen für die UI: [Name, Regelhinweis]. */
 export const LABELS = {
   kniffel: {
     ones: ['Einser', 'Nur Einser zählen'],
@@ -55,6 +57,14 @@ export const LABELS = {
   },
 };
 
+/** Kurze Feldnamen für das Spielprotokoll. */
+export const CAT_NAMES = Object.fromEntries(
+  Object.entries(LABELS).map(([mode, cats]) => [
+    mode,
+    Object.fromEntries(Object.entries(cats).map(([key, [name]]) => [key, name])),
+  ])
+);
+
 export function allCategories(mode) {
   const m = MODES[mode];
   return [...m.upper, ...m.lower];
@@ -74,6 +84,13 @@ function isYahtzee(dice) {
   return dice.every((d) => d === dice[0]);
 }
 
+/**
+ * Punkte, die ein Wurf in einer Kategorie bringen würde.
+ * @param {string} mode 'kniffel' | 'yatzy'
+ * @param {string} cat Kategorie-Schlüssel
+ * @param {number[]} dice 5 Würfel (1–6)
+ * @param {boolean} joker Kniffel-Jokerregel aktiv
+ */
 export function scoreCategory(mode, cat, dice, joker = false) {
   const c = counts(dice);
   const upperIndex = MODES[mode].upper.indexOf(cat);
@@ -81,6 +98,7 @@ export function scoreCategory(mode, cat, dice, joker = false) {
     const face = upperIndex + 1;
     return c[face] * face;
   }
+
   switch (cat) {
     case 'onePair': {
       for (let f = 6; f >= 1; f--) if (c[f] >= 2) return f * 2;
@@ -133,16 +151,46 @@ export function scoreCategory(mode, cat, dice, joker = false) {
     case 'chance':
       return sum(dice);
     default:
-      return 0;
+      throw new Error(`Unbekannte Kategorie: ${cat}`);
   }
 }
 
+/** Prüft, ob die Kniffel-Jokerregel für diesen Wurf greift. */
 export function jokerApplies(mode, dice, scores) {
   if (mode !== 'kniffel') return false;
   return isYahtzee(dice) && scores[MODES[mode].yahtzeeCategory] === 50;
 }
 
-// ===== Analogmodus: mögliche Werte je Feld (Kopie der Server-Logik) =====
+/** Summen und Boni für einen Wertungsbogen. */
+export function totals(mode, scores, extraYahtzees = 0) {
+  const m = MODES[mode];
+  const val = (cat) => (typeof scores[cat] === 'number' ? scores[cat] : 0);
+  const upperSum = m.upper.reduce((a, cat) => a + val(cat), 0);
+  const bonus = upperSum >= m.upperBonus.threshold ? m.upperBonus.points : 0;
+  const lowerSum = m.lower.reduce((a, cat) => a + val(cat), 0);
+  const extraBonus = (m.extraYahtzeeBonus || 0) * extraYahtzees;
+  return {
+    upperSum,
+    bonus,
+    upperTotal: upperSum + bonus,
+    lowerSum,
+    extraBonus,
+    grandTotal: upperSum + bonus + lowerSum + extraBonus,
+  };
+}
+
+/** Sind alle Felder eines Spielers ausgefüllt? */
+export function sheetComplete(mode, scores) {
+  return allCategories(mode).every((cat) => typeof scores[cat] === 'number');
+}
+
+export function emptyScores(mode) {
+  const scores = {};
+  for (const cat of allCategories(mode)) scores[cat] = null;
+  return scores;
+}
+
+// ===== Analogmodus: mögliche Werte je Feld =====
 
 function rangeChoices(from, to, step) {
   const out = [0];
@@ -183,7 +231,7 @@ export function manualScoreOptions(mode, cat) {
       case 'yatzy': return { choices: [0, 50] };
     }
   }
-  return { range: [0, 50] };
+  throw new Error(`Unbekannte Kategorie: ${cat}`);
 }
 
 export function validManualScore(mode, cat, value) {
