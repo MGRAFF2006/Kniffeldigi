@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="180" viewBox="0 0 720 180" role="img" aria-labelledby="title desc">
+  <title id="title">Würfelblock</title>
+  <desc id="desc">Two dice beside the Würfelblock wordmark</desc>
+  <rect width="720" height="180" rx="28" fill="#fffdf5"/>
+  <g transform="translate(34 28)" fill="#fff" stroke="#7f1d1d" stroke-width="7">
+    <rect x="0" y="24" width="78" height="78" rx="14" transform="rotate(-9 39 63)"/>
+    <rect x="68" y="17" width="78" height="78" rx="14" transform="rotate(8 107 56)"/>
+  </g>
+  <g fill="#7f1d1d">
+    <circle cx="55" cy="65" r="7"/><circle cx="78" cy="87" r="7"/>
+    <circle cx="111" cy="57" r="7"/><circle cx="133" cy="78" r="7"/><circle cx="89" cy="37" r="7"/>
+  </g>
+  <text x="205" y="90" fill="#3f3f46" font-family="Georgia, serif" font-size="55" font-weight="700">Würfelblock</text>
+  <text x="209" y="126" fill="#7f1d1d" font-family="Arial, sans-serif" font-size="22" letter-spacing="2">KNIFFEL &amp; YATZY</text>
+</svg>
