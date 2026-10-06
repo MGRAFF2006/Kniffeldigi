@@ -66,6 +66,7 @@ function cloneJson(value) {
 /** Punktestand + Spielstatus für späteren Revert im Protokoll. */
 function captureSnapshot(state) {
   return {
+    version: 1,
     players: state.players.map((p) => ({
       token: p.token,
       scores: { ...p.scores },
@@ -190,6 +191,17 @@ function resetScores(state) {
 }
 
 export function applyAction(state, token, action) {
+  const logStart = state.log.length;
+  applyGameAction(state, token, action);
+  if (state.entry === 'digital') {
+    // Alle Meldungen einer Aktion gehören zum fertigen Stand, inklusive neuem Zug/Spielende.
+    for (let i = logStart; i < state.log.length; i++) {
+      state.log[i].snap = captureSnapshot(state);
+    }
+  }
+}
+
+function applyGameAction(state, token, action) {
   switch (action.type) {
     case 'start': {
       const index = requirePlayer(state, token);
@@ -237,6 +249,9 @@ export function applyAction(state, token, action) {
       const logId = Number(action.logId);
       const entry = state.log.find((e) => e.id === logId);
       if (!entry || !entry.snap) throw new GameError('Dieser Protokolleintrag kann nicht wiederhergestellt werden.');
+      if (state.entry === 'digital' && entry.snap.version !== 1) {
+        throw new GameError('Dieser Eintrag stammt aus einem älteren Digitalspiel und kann nicht sicher wiederhergestellt werden.');
+      }
       applySnapshot(state, entry.snap);
       pushLog(state, `${state.players[actor].name} stellt den Spielstand von „${entry.text}“ wieder her.`);
       if (state.entry === 'manual' && state.status === 'playing') maybeFinishManual(state);
@@ -434,11 +449,11 @@ export function publicState(state, requesterToken) {
     turn: state.turn,
     results: state.results,
     // Vollständiges Protokoll (ohne Snapshots) – Revert läuft serverseitig über die Log-ID.
-    log: (state.log || []).map(({ id, t, text }) => ({
+    log: (state.log || []).map(({ id, t, text, snap }) => ({
       id: id ?? null,
       t,
       text,
-      canRevert: id != null,
+      canRevert: id != null && !!snap && (state.entry !== 'digital' || snap.version === 1),
     })),
     createdAt: state.createdAt,
     startedAt: state.startedAt,

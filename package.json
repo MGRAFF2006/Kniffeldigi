@@ -8,7 +8,7 @@
     "dev": "wrangler dev --port 8788",
     "deploy": "wrangler deploy",
     "db:create": "wrangler d1 create wuerfelblock-db",
-    "test": "node tests/rules.test.mjs && node tests/api.test.mjs"
+    "test": "node tests/rules.test.mjs && node --test tests/log-snapshots.test.mjs && node tests/api.test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
