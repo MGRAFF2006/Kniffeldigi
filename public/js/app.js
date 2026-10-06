@@ -89,12 +89,17 @@ function renderNav() {
   if (logout) {
     logout.addEventListener('click', async (e) => {
       e.preventDefault();
+      const navigation = navigationGeneration;
+      const session = getSession();
       try { await api.logout(); } catch {}
+      if (session !== getSession()) return;
       setSession(null);
       renderNav();
-      location.hash = '#/';
+      if (navigation === navigationGeneration) {
+        location.hash = '#/';
+        toast('Abgemeldet. Bis zum nächsten Wurf!');
+      }
       route();
-      toast('Abgemeldet. Bis zum nächsten Wurf!');
     });
   }
 }
@@ -102,6 +107,8 @@ function renderNav() {
 // ===== Landing =====
 
 function viewLanding() {
+  const navigation = navigationGeneration;
+  const session = getSession();
   document.title = 'Würfelblock – Kniffel & Yatzy online';
   const name = defaultName();
   app.innerHTML = `
@@ -243,8 +250,10 @@ function viewLanding() {
       rememberName(playerName);
       const data = await api.joinGame(code, playerName);
       setPlayerToken(data.code, data.playerToken);
+      if (!isCurrentView(navigation, session)) return;
       location.hash = `#/game/${data.code}`;
     } catch (err) {
+      if (!isCurrentView(navigation, session)) return;
       errEl.textContent = err.message;
     }
   });
@@ -256,8 +265,10 @@ function viewLanding() {
     if (code.length < 4) { errEl.textContent = 'Bitte gib den 5-stelligen Spielcode ein.'; return; }
     try {
       await api.gameState(code);
+      if (!isCurrentView(navigation, session)) return;
       location.hash = `#/watch/${code}`;
     } catch (err) {
+      if (!isCurrentView(navigation, session)) return;
       errEl.textContent = err.message;
     }
   });
@@ -272,8 +283,10 @@ function viewLanding() {
       const hostPaper = selectedEntry === 'manual' && hostPaperInput.checked;
       const data = await api.createGame(selectedMode, playerName, selectedEntry, hostPaper);
       setPlayerToken(data.code, data.playerToken);
+      if (!isCurrentView(navigation, session)) return;
       location.hash = `#/game/${data.code}`;
     } catch (err) {
+      if (!isCurrentView(navigation, session)) return;
       errEl.textContent = err.message;
     }
   });
@@ -283,22 +296,39 @@ function viewLanding() {
 
 let poller = null;
 let currentGame = null;
-let rollAnimating = false;
+let rollAnimation = null;
+let navigationGeneration = 0;
+
+function isCurrentView(navigation, session) {
+  return navigation === navigationGeneration && session === getSession();
+}
+
+function isCurrentGame(game) {
+  return currentGame === game && game.session === getSession();
+}
 
 function stopPolling() {
+  navigationGeneration++;
   if (poller) { clearInterval(poller); poller = null; }
+  clearTimeout(rollAnimation);
+  rollAnimation = null;
   currentGame = null;
 }
 
 async function viewGame(code, spectator) {
+  const game = { code, version: 0, spectator, session: getSession() };
+  currentGame = game;
   document.title = `Spiel ${code} – Würfelblock`;
   app.innerHTML = '<p class="muted loading"><span class="spin">🎲</span> Spiel wird geladen …</p>';
   try {
     const data = await api.gameState(code);
-    currentGame = { code: data.code, version: data.version, spectator };
+    if (!isCurrentGame(game)) return;
+    game.code = data.code;
+    game.version = data.version;
     renderGame(data.state);
     poller = setInterval(pollGame, 1500);
   } catch (err) {
+    if (!isCurrentGame(game)) return;
     app.innerHTML = `
       <section class="sheet auth-wrap"><div class="sheet-head"><h2>Hoppla</h2></div>
       <div class="sheet-body"><p>${esc(err.message)}</p>
@@ -307,11 +337,12 @@ async function viewGame(code, spectator) {
 }
 
 async function pollGame() {
-  if (!currentGame || rollAnimating) return;
+  const game = currentGame;
+  if (!game || rollAnimation || !isCurrentGame(game)) return;
   try {
-    const data = await api.gameState(currentGame.code, currentGame.version);
-    if (data && currentGame) {
-      currentGame.version = data.version;
+    const data = await api.gameState(game.code, game.version);
+    if (data && isCurrentGame(game) && data.version > game.version) {
+      game.version = data.version;
       renderGame(data.state);
     }
   } catch {
@@ -320,21 +351,27 @@ async function pollGame() {
 }
 
 async function doAction(action, { animateRoll = false } = {}) {
-  if (!currentGame) return;
+  const game = currentGame;
+  if (!game || !isCurrentGame(game)) return;
   try {
-    const data = await api.gameAction(currentGame.code, action);
-    currentGame.version = data.version;
+    const data = await api.gameAction(game.code, action);
+    if (!isCurrentGame(game) || data.version < game.version) return;
+    game.version = data.version;
+    clearTimeout(rollAnimation);
+    rollAnimation = null;
     if (animateRoll) {
-      rollAnimating = true;
       app.querySelectorAll('.dice-tray .die').forEach((d) => d.classList.add('rolling'));
-      setTimeout(() => {
-        rollAnimating = false;
-        if (currentGame) renderGame(data.state);
+      const animation = setTimeout(() => {
+        if (!isCurrentGame(game) || rollAnimation !== animation) return;
+        rollAnimation = null;
+        if (data.version === game.version) renderGame(data.state);
       }, 420);
+      rollAnimation = animation;
     } else {
       renderGame(data.state);
     }
   } catch (err) {
+    if (!isCurrentGame(game)) return;
     toast(err.message, true);
   }
 }
@@ -465,6 +502,7 @@ function filledCount(player) {
 
 function renderGame(state) {
   if (!currentGame) return;
+  const game = currentGame;
   const { code, spectator } = currentGame;
   const me = state.you;
   const isPlayer = !spectator && me !== null;
@@ -669,8 +707,10 @@ function renderGame(state) {
     if (el) el.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(text);
+        if (!isCurrentGame(game)) return;
         toast(msg);
       } catch {
+        if (!isCurrentGame(game)) return;
         toast(text);
       }
     });
@@ -825,6 +865,8 @@ function openEntryModal(state, cat, current = null, forPlayer = null) {
 // ===== Auth =====
 
 function viewLogin() {
+  const navigation = navigationGeneration;
+  const session = getSession();
   document.title = 'Anmelden – Würfelblock';
   app.innerHTML = `
     <section class="sheet auth-wrap">
@@ -845,17 +887,21 @@ function viewLogin() {
     errEl.textContent = '';
     try {
       const data = await api.login(document.getElementById('lg-user').value.trim(), document.getElementById('lg-pass').value);
+      if (!isCurrentView(navigation, session)) return;
       setSession(data.token, data.user);
       renderNav();
       toast(`Hallo, ${data.user.displayName}!`);
       location.hash = '#/';
     } catch (err) {
+      if (!isCurrentView(navigation, session)) return;
       errEl.textContent = err.message;
     }
   });
 }
 
 function viewRegister() {
+  const navigation = navigationGeneration;
+  const session = getSession();
   document.title = 'Registrieren – Würfelblock';
   app.innerHTML = `
     <section class="sheet auth-wrap">
@@ -879,11 +925,13 @@ function viewRegister() {
     const display = document.getElementById('rg-display').value.trim() || username;
     try {
       const data = await api.register(username, display, document.getElementById('rg-pass').value);
+      if (!isCurrentView(navigation, session)) return;
       setSession(data.token, data.user);
       renderNav();
       toast(`Willkommen, ${data.user.displayName}! Dein Konto ist bereit.`);
       location.hash = '#/';
     } catch (err) {
+      if (!isCurrentView(navigation, session)) return;
       errEl.textContent = err.message;
     }
   });
@@ -892,6 +940,8 @@ function viewRegister() {
 // ===== Einstellungen =====
 
 async function viewSettings() {
+  const navigation = navigationGeneration;
+  const session = getSession();
   document.title = 'Einstellungen – Würfelblock';
   const user = getStoredUser();
   const inkKey = localStorage.getItem('wb_ink') || 'blau';
@@ -963,10 +1013,12 @@ async function viewSettings() {
       errEl.textContent = '';
       try {
         const data = await api.updateProfile(document.getElementById('st-display').value.trim());
-        setSession(getSession(), data.user);
+        if (!isCurrentView(navigation, session)) return;
+        setSession(session, data.user);
         renderNav();
         toast('Anzeigename gespeichert!');
       } catch (err) {
+        if (!isCurrentView(navigation, session)) return;
         errEl.textContent = err.message;
       }
     });
@@ -977,9 +1029,11 @@ async function viewSettings() {
       errEl.textContent = '';
       try {
         await api.changePassword(document.getElementById('st-oldpass').value, document.getElementById('st-newpass').value);
+        if (!isCurrentView(navigation, session)) return;
         document.getElementById('pass-form').reset();
         toast('Passwort geändert!');
       } catch (err) {
+        if (!isCurrentView(navigation, session)) return;
         errEl.textContent = err.message;
       }
     });
@@ -987,6 +1041,7 @@ async function viewSettings() {
     // Historie & Statistik laden
     try {
       const { games, stats } = await api.history();
+      if (!isCurrentView(navigation, session)) return;
       const statHTML = stats.length
         ? `<div class="stats-row">${stats
             .map(
@@ -1022,6 +1077,7 @@ async function viewSettings() {
           </table>
         </div></section>`;
     } catch (err) {
+      if (!isCurrentView(navigation, session)) return;
       if (err.status === 401) {
         setSession(null);
         renderNav();
@@ -1034,6 +1090,7 @@ async function viewSettings() {
 
 function route() {
   stopPolling();
+  closeEntryModal();
   const hash = location.hash || '#/';
   const gameMatch = hash.match(/^#\/game\/([A-Za-z0-9]+)/);
   const watchMatch = hash.match(/^#\/watch\/([A-Za-z0-9]+)/);
@@ -1058,12 +1115,18 @@ function route() {
 
 // Session beim Start validieren (Token könnte abgelaufen sein).
 async function validateSession() {
-  if (!getSession()) return;
+  const session = getSession();
+  if (!session) return;
   try {
     const data = await api.me();
-    setSession(getSession(), data.user);
+    if (session !== getSession()) return;
+    setSession(session, data.user);
   } catch (err) {
-    if (err.status === 401) setSession(null);
+    if (session !== getSession()) return;
+    if (err.status === 401) {
+      setSession(null);
+      route();
+    }
   }
   renderNav();
 }
