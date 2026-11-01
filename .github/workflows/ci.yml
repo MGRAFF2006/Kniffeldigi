@@ -6,12 +6,23 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    if: vars.CI_RUNNER != ''
-    runs-on: ${{ vars.CI_RUNNER }}
+    runs-on: boat-small
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
       - run: npm ci
       - name: Test rules
         run: node tests/rules.test.mjs
