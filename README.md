@@ -54,6 +54,17 @@ Das führt die Regeltests und den API-End-to-End-Test aus. Nur die Regeltests:
 node tests/rules.test.mjs
 ```
 
+### Browser-Test
+
+Ein Smoke-Test spielt einen analogen Kniffel-Abend in headless Chromium durch: Spiel anlegen, zweiter Spieler tritt per Code bei, beide tragen ein, Korrektur (überschreiben und leeren), Zuschauer-Ansicht und Wechsel zwischen zwei Spielen. Er startet dafür selbst einen `wrangler dev` auf einem freien Port mit einer leeren, temporären Datenbank; ein laufender `npm run dev` stört nicht. Einmalig den Browser installieren, dann ausführen:
+
+```bash
+npx playwright install --only-shell chromium   # unter Linux ggf. mit --with-deps
+npm run test:browser
+```
+
+Der Test schlägt fehl, wenn der Block nicht den erwarteten Stand zeigt oder im Browser ein Fehler (`pageerror`, `console.error`) auftritt. In der CI läuft er nach dem API-Test.
+
 ## Auf Cloudflare deployen
 
 1. Mit `npx wrangler login` anmelden und mit `npm run db:create` eine eigene D1-Datenbank erstellen.
@@ -77,7 +88,7 @@ Die Handler unter `functions/api/` bleiben mit Pages Functions kompatibel. Bei e
 | `functions/api/_lib/schema.js` | D1-Schema und Bootstrap beim ersten Request |
 | `src/worker.js` | Worker-Einstiegspunkt und API-Routing |
 | `schema.sql` | D1-Schema |
-| `tests/` | Regeltests, API-Test und Screenshot-Skript |
+| `tests/` | Regeltests, API-Test, Browser-Test und Screenshot-Skript |
 
 ## Kniffel und Yatzy im Vergleich
 

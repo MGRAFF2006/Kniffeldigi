@@ -43,3 +43,18 @@ jobs:
           done
           curl --fail --silent http://127.0.0.1:8788/ >/dev/null
           node tests/api.test.mjs
+      - name: Get Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install Playwright Chromium
+        timeout-minutes: 5
+        run: npx playwright install --with-deps --only-shell chromium
+      - name: Test browser journey
+        # Der Test startet und beendet seinen eigenen wrangler-dev-Server.
+        timeout-minutes: 3
+        run: npm run test:browser
