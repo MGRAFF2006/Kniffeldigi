@@ -1,0 +1,27 @@
+name: Dependency audit
+
+# Weekly check for known high/critical vulnerabilities in the npm dependency tree
+# (Wrangler and its toolchain). One runner start per week; also runnable by hand.
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: boat-small
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      # The audit reads the lockfile; nothing needs to be installed.
+      - run: npm audit --audit-level=high
