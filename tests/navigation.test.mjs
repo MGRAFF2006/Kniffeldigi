@@ -254,34 +254,53 @@ test('a queued older roll callback cannot clear a newer roll in the same game', 
 test('settings history cannot write into a reopened settings page or clear a new session', async () => {
   const f = fixture();
   f.probe.setSession('old-session', { username: 'old', displayName: 'Old' });
-  const oldSettings = f.probe.viewSettings();
+  f.navigate('#/settings');
   const response = f.take();
   f.navigate('#/login');
   f.navigate('#/settings');
   f.take().resolve({ games: [], stats: [] });
   await Promise.resolve();
   response.resolve({ games: [], stats: [{ mode: 'old-history', games: 3 }] });
-  await oldSettings;
+  await new Promise(resolve => setImmediate(resolve));
   assert.doesNotMatch(f.elements.get('history-area').innerHTML ?? '', /old-history/);
-  const oldFailure = f.probe.viewSettings();
+  f.navigate('#/settings');
   const failure = f.take();
   f.probe.setSession('new-session', { displayName: 'New' });
   failure.resolve({ error: 'expired' }, 401);
-  await oldFailure;
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.probe.getSession(), 'new-session');
 });
 
 test('active settings history and expired-session cleanup still work', async () => {
   const f = fixture();
   f.probe.setSession('session', { username: 'fixture', displayName: 'Fixture' });
-  const settings = f.probe.viewSettings();
+  f.navigate('#/settings');
   f.take().resolve({ games: [], stats: [] });
-  await settings;
+  await new Promise(resolve => setImmediate(resolve));
   assert.match(f.elements.get('history-area').innerHTML, /Deine Spiele/);
-  const expired = f.probe.viewSettings();
+  f.navigate('#/settings');
   f.take().resolve({ error: 'expired' }, 401);
-  await expired;
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.probe.getSession(), null);
+  // The expired account's controls are replaced by the signed-out settings page.
+  assert.equal(f.elements.has('profile-form'), false);
+  assert.equal(f.pending.length, 0);
+});
+
+test('expired history before startup validation still leaves signed-out settings', async () => {
+  const f = fixture();
+  f.probe.setSession('expired-session', { username: 'fixture', displayName: 'Fixture' });
+  f.navigate('#/settings');
+  const history = f.take();
+  const validation = f.probe.validateSession();
+  const me = f.take();
+  history.resolve({ error: 'expired' }, 401);
+  await new Promise(resolve => setImmediate(resolve));
+  me.resolve({ error: 'expired' }, 401);
+  await validation;
+  assert.equal(f.probe.getSession(), null);
+  assert.equal(f.elements.has('profile-form'), false);
+  assert.equal(f.elements.has('nav-logout'), false);
 });
 
 test('startup session validation cannot overwrite or remove a replacement session', async () => {
@@ -299,24 +318,34 @@ test('startup session validation cannot overwrite or remove a replacement sessio
   }
 });
 
-test('an expired startup session reloads the current game instead of leaving its load stale', async () => {
+test('account session changes do not freeze a loading or open game', async () => {
+  // Game state and actions are authorized by the seat token, so an expired startup session
+  // or a sign-out in another tab must not strand the game view.
   const f = fixture();
   f.probe.setSession('expired-session', { displayName: 'Fixture' });
   f.navigate('#/watch/AAAAA');
-  const oldLoad = f.take();
+  const load = f.take();
   const validation = f.probe.validateSession();
   f.take().resolve({ error: 'expired' }, 401);
   await validation;
   assert.equal(f.probe.getSession(), null);
-  const newLoad = f.take();
-  assert.equal(newLoad.options.headers.Authorization, undefined);
-  newLoad.resolve(game('AAAAA', 2));
-  oldLoad.resolve(game('AAAAA', 1));
-  // Flush both actual fetch/json continuations.
+  assert.equal(f.pending.length, 0, 'the game view is not reloaded');
+  load.resolve(game('AAAAA', 1));
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(f.probe.getGame().version, 2);
   assert.equal(f.renders.length, 1);
   assert.equal(f.intervals.size, 1);
+
+  f.probe.setSession('other-tab', { displayName: 'Other' });
+  f.probe.setSession(null);
+  const poll = f.probe.pollGame();
+  f.take().resolve(game('AAAAA', 2));
+  await poll;
+  assert.equal(f.probe.getGame().version, 2);
+  const action = f.probe.doAction({ type: 'roll' });
+  f.take().resolve(game('AAAAA', 3));
+  await action;
+  assert.equal(f.probe.getGame().version, 3);
+  assert.equal(f.renders.length, 3);
 });
 
 test('late password and profile saves do not reset new forms or display stale notices', async () => {
@@ -332,23 +361,36 @@ test('late password and profile saves do not reset new forms or display stale no
   f.navigate('#/settings');
   f.take().resolve({ games: [], stats: [] });
   passwordResponse.resolve({ success: true });
-  profileResponse.resolve({ user: { displayName: 'Old response' } });
+  profileResponse.resolve({ user: { displayName: 'Saved name' } });
   await Promise.all([password, profile]);
   assert.equal(f.elements.get('pass-form').wasReset, undefined);
-  assert.equal(f.probe.getStoredUser().displayName, 'Fixture');
+  // The server saved the name, so the cached account (and the next settings view) shows it.
+  assert.equal(f.probe.getStoredUser().displayName, 'Saved name');
   assert.deepEqual(f.notices, []);
 });
 
-test('late login cannot replace a new route/session; active login still succeeds', async () => {
+test('late login keeps its session without redirecting; it cannot replace another session', async () => {
   const f = fixture();
   f.navigate('#/login');
-  const oldLogin = f.click('login-form', 'submit');
+  const lateLogin = f.click('login-form', 'submit');
   const response = f.take();
   f.navigate('#/register');
-  response.resolve({ token: 'old-session', user: { displayName: 'Old' } });
-  await oldLogin;
-  assert.equal(f.probe.getSession(), null);
+  response.resolve({ token: 'late-session', user: { displayName: 'Late' } });
+  await lateLogin;
+  // The server created this session; dropping it would leave the user silently signed out.
+  assert.equal(f.probe.getSession(), 'late-session');
   assert.equal(f.location.hash, '#/register');
+  assert.deepEqual(f.notices, []);
+  f.probe.setSession(null);
+
+  f.navigate('#/login');
+  const oldLogin = f.click('login-form', 'submit');
+  const oldResponse = f.take();
+  f.probe.setSession('other-tab', { displayName: 'Other' });
+  oldResponse.resolve({ token: 'old-session', user: { displayName: 'Old' } });
+  await oldLogin;
+  assert.equal(f.probe.getSession(), 'other-tab');
+  f.probe.setSession(null);
   f.navigate('#/login');
   const login = f.click('login-form', 'submit');
   f.take().resolve({ token: 'session', user: { displayName: 'Fixture' } });
@@ -365,10 +407,14 @@ test('logout clears only its session and preserves a newer route without stale n
   const logout = f.click('nav-logout');
   const response = f.take();
   f.navigate('#/login');
+  const typed = f.elements.get('lg-user');
+  typed.value = 'typed-user';
   response.resolve({ success: true });
   await logout;
   assert.equal(f.probe.getSession(), null);
   assert.equal(f.location.hash, '#/login');
+  assert.equal(f.elements.get('lg-user'), typed, 'the login form is not rebuilt');
+  assert.equal(typed.value, 'typed-user');
   assert.deepEqual(f.notices, []);
 
   f.probe.setSession('old-session', { displayName: 'Old' });
@@ -413,6 +459,19 @@ test('a completed join preserves its player token without redirecting a newer ro
   f.elements.get('join-code').value = 'AAAAA';
   await f.click('btn-join');
   assert.equal(f.location.hash, '#/game/AAAAA');
+});
+
+test('a pending completion cannot override a URL change whose hashchange is still queued', async () => {
+  const f = fixture();
+  f.navigate('#/');
+  f.elements.get('join-code').value = 'AAAAA';
+  const watch = f.click('btn-watch');
+  const response = f.take();
+  // The browser updates location.hash before the queued hashchange event runs the router.
+  f.location.hash = '#/settings';
+  response.resolve(game('AAAAA', 1));
+  await watch;
+  assert.equal(f.location.hash, '#/settings');
 });
 
 test('navigation removes an old scoring modal, and clipboard notices belong to their game', async () => {

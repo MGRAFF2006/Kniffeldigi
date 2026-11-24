@@ -93,13 +93,16 @@ function renderNav() {
       const session = getSession();
       try { await api.logout(); } catch {}
       if (session !== getSession()) return;
+      if (!isCurrentView(navigation, session)) {
+        // Inzwischen läuft eine andere Ansicht – nicht wegnavigieren oder Eingaben verwerfen.
+        endSession();
+        return;
+      }
       setSession(null);
       renderNav();
-      if (navigation === navigationGeneration) {
-        location.hash = '#/';
-        toast('Abgemeldet. Bis zum nächsten Wurf!');
-      }
+      location.hash = '#/';
       route();
+      toast('Abgemeldet. Bis zum nächsten Wurf!');
     });
   }
 }
@@ -298,13 +301,28 @@ let poller = null;
 let currentGame = null;
 let rollAnimation = null;
 let navigationGeneration = 0;
+let routedHash = null;
 
-function isCurrentView(navigation, session) {
-  return navigation === navigationGeneration && session === getSession();
+function currentHash() {
+  return location.hash || '#/';
 }
 
+// Eine Ansicht gehört noch dem Nutzer, solange weder Route, URL (hashchange kann noch
+// ausstehen) noch Konto-Sitzung gewechselt haben.
+function isCurrentView(navigation, session) {
+  return navigation === navigationGeneration && currentHash() === routedHash && session === getSession();
+}
+
+// Spielzugriff läuft über den Spieler-Token, nicht über die Konto-Sitzung.
 function isCurrentGame(game) {
-  return currentGame === game && game.session === getSession();
+  return currentGame === game;
+}
+
+// Konto-Sitzung ist abgelaufen oder beendet: nur die Einstellungen zeigen Kontodaten.
+function endSession() {
+  setSession(null);
+  renderNav();
+  if (currentHash().startsWith('#/settings')) route();
 }
 
 function stopPolling() {
@@ -316,7 +334,7 @@ function stopPolling() {
 }
 
 async function viewGame(code, spectator) {
-  const game = { code, version: 0, spectator, session: getSession() };
+  const game = { code, version: 0, spectator };
   currentGame = game;
   document.title = `Spiel ${code} – Würfelblock`;
   app.innerHTML = '<p class="muted loading"><span class="spin">🎲</span> Spiel wird geladen …</p>';
@@ -864,6 +882,16 @@ function openEntryModal(state, cat, current = null, forPlayer = null) {
 
 // ===== Auth =====
 
+// Eine erfolgreiche Anmeldung gilt, solange keine andere Sitzung sie ersetzt hat; nur
+// Weiterleitung und Hinweis entfallen, wenn der Nutzer schon woanders ist.
+function signedIn(navigation, session, data) {
+  if (session !== getSession()) return false;
+  const current = isCurrentView(navigation, session);
+  setSession(data.token, data.user);
+  renderNav();
+  return current;
+}
+
 function viewLogin() {
   const navigation = navigationGeneration;
   const session = getSession();
@@ -887,9 +915,7 @@ function viewLogin() {
     errEl.textContent = '';
     try {
       const data = await api.login(document.getElementById('lg-user').value.trim(), document.getElementById('lg-pass').value);
-      if (!isCurrentView(navigation, session)) return;
-      setSession(data.token, data.user);
-      renderNav();
+      if (!signedIn(navigation, session, data)) return;
       toast(`Hallo, ${data.user.displayName}!`);
       location.hash = '#/';
     } catch (err) {
@@ -925,9 +951,7 @@ function viewRegister() {
     const display = document.getElementById('rg-display').value.trim() || username;
     try {
       const data = await api.register(username, display, document.getElementById('rg-pass').value);
-      if (!isCurrentView(navigation, session)) return;
-      setSession(data.token, data.user);
-      renderNav();
+      if (!signedIn(navigation, session, data)) return;
       toast(`Willkommen, ${data.user.displayName}! Dein Konto ist bereit.`);
       location.hash = '#/';
     } catch (err) {
@@ -1013,9 +1037,11 @@ async function viewSettings() {
       errEl.textContent = '';
       try {
         const data = await api.updateProfile(document.getElementById('st-display').value.trim());
-        if (!isCurrentView(navigation, session)) return;
+        if (session !== getSession()) return;
+        // Gespeichert ist gespeichert – auch wenn die Ansicht inzwischen gewechselt hat.
         setSession(session, data.user);
         renderNav();
+        if (!isCurrentView(navigation, session)) return;
         toast('Anzeigename gespeichert!');
       } catch (err) {
         if (!isCurrentView(navigation, session)) return;
@@ -1078,10 +1104,7 @@ async function viewSettings() {
         </div></section>`;
     } catch (err) {
       if (!isCurrentView(navigation, session)) return;
-      if (err.status === 401) {
-        setSession(null);
-        renderNav();
-      }
+      if (err.status === 401) endSession();
     }
   }
 }
@@ -1091,7 +1114,8 @@ async function viewSettings() {
 function route() {
   stopPolling();
   closeEntryModal();
-  const hash = location.hash || '#/';
+  const hash = currentHash();
+  routedHash = hash;
   const gameMatch = hash.match(/^#\/game\/([A-Za-z0-9]+)/);
   const watchMatch = hash.match(/^#\/watch\/([A-Za-z0-9]+)/);
 
@@ -1123,10 +1147,7 @@ async function validateSession() {
     setSession(session, data.user);
   } catch (err) {
     if (session !== getSession()) return;
-    if (err.status === 401) {
-      setSession(null);
-      route();
-    }
+    if (err.status === 401) endSession();
   }
   renderNav();
 }
