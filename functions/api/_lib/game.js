@@ -81,6 +81,20 @@ function captureSnapshot(state) {
   };
 }
 
+/**
+ * Digitale Snapshots enthalten Zugindex und Rangliste der damaligen Spielerliste.
+ * Nur Snapshots aus dem aktuellen Format und – außerhalb der Lobby – mit derselben
+ * Spielerreihenfolge lassen sich konsistent wiederherstellen.
+ */
+function snapshotRestorable(state, snap) {
+  if (!snap) return false;
+  if (state.entry !== 'digital') return true;
+  if (snap.version !== 1) return false;
+  if (snap.status === 'lobby') return true;
+  return snap.players.length === state.players.length
+    && snap.players.every((p, i) => p.token === state.players[i].token);
+}
+
 function applySnapshot(state, snap) {
   const byToken = new Map(snap.players.map((p) => [p.token, p]));
   for (const player of state.players) {
@@ -251,6 +265,9 @@ function applyGameAction(state, token, action) {
       if (!entry || !entry.snap) throw new GameError('Dieser Protokolleintrag kann nicht wiederhergestellt werden.');
       if (state.entry === 'digital' && entry.snap.version !== 1) {
         throw new GameError('Dieser Eintrag stammt aus einem älteren Digitalspiel und kann nicht sicher wiederhergestellt werden.');
+      }
+      if (!snapshotRestorable(state, entry.snap)) {
+        throw new GameError('Seit diesem Eintrag hat sich die Spielerliste geändert – er kann nicht wiederhergestellt werden.');
       }
       applySnapshot(state, entry.snap);
       pushLog(state, `${state.players[actor].name} stellt den Spielstand von „${entry.text}“ wieder her.`);
@@ -453,7 +470,7 @@ export function publicState(state, requesterToken) {
       id: id ?? null,
       t,
       text,
-      canRevert: id != null && !!snap && (state.entry !== 'digital' || snap.version === 1),
+      canRevert: id != null && snapshotRestorable(state, snap),
     })),
     createdAt: state.createdAt,
     startedAt: state.startedAt,

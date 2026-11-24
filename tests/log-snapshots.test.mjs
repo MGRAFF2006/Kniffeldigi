@@ -162,3 +162,36 @@ test('new start and reset entries restore their completed states after persisten
   assert.equal(state.players[0].scores.chance, null);
   assert.ok(publicState(state).log.every((entry) => entry.canRevert));
 });
+
+test('digital entries from a different roster stay visible but cannot be restored', () => {
+  const { state, players: [alice, bob] } = digitalGame();
+  for (const category of allCategories(state.mode)) {
+    alice.scores[category] = 0;
+    bob.scores[category] = 0;
+  }
+  alice.scores.chance = null;
+  bob.scores.chance = null;
+  const [aliceScore] = scoreSixes(state, alice.token);
+  const bobEntries = scoreSixes(state, bob.token);
+  const finished = bobEntries.at(-1);
+  assert.match(finished.text, /Spiel beendet/);
+  applyAction(state, alice.token, { type: 'reset' });
+  const reset = state.log.at(-1);
+  applyAction(state, bob.token, { type: 'leave' });
+
+  // Alice's full sheet with her turn, or a two-player result in a one-player game, is unplayable.
+  const before = JSON.stringify(state);
+  for (const entry of [aliceScore, finished]) {
+    assert.throws(() => restore(state, alice.token, entry), (error) =>
+      error instanceof GameError && /Spielerliste/.test(error.message));
+    assert.equal(JSON.stringify(state), before);
+    assert.equal(publicState(state, alice.token).log.find((log) => log.id === entry.id).canRevert, false);
+  }
+
+  // Lobby states hold no turn or results and remain restorable.
+  assert.equal(publicState(state, alice.token).log.find((log) => log.id === reset.id).canRevert, true);
+  restore(state, alice.token, reset);
+  assert.equal(state.status, 'lobby');
+  assert.equal(state.results, null);
+  assert.deepEqual(state.players.map((p) => p.name), ['Alice']);
+});
