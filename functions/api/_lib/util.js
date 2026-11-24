@@ -11,6 +11,14 @@ export function apiError(message, status = 400) {
   return json({ error: message }, status);
 }
 
+/** Fehler mit HTTP-Status, den die Middleware als JSON-Antwort ausgibt. */
+export class RequestError extends Error {
+  constructor(message, status = 400) {
+    super(message);
+    this.status = status;
+  }
+}
+
 export function randomToken(bytes = 24) {
   const buf = new Uint8Array(bytes);
   crypto.getRandomValues(buf);

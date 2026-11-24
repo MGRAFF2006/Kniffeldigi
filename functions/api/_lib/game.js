@@ -11,7 +11,7 @@ import {
   totals,
   validManualScore,
 } from './rules.js';
-import { normalizeCode, randomDie, randomGameCode, randomToken } from './util.js';
+import { RequestError, normalizeCode, randomDie, randomGameCode, randomToken } from './util.js';
 
 export const MAX_PLAYERS = 8;
 export const MAX_ROLLS = 3;
@@ -57,7 +57,7 @@ export function addPlayer(state, name, userId) {
   return player;
 }
 
-export class GameError extends Error {}
+export class GameError extends RequestError {}
 
 function cloneJson(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
@@ -293,6 +293,8 @@ function applyGameAction(state, token, action) {
         throw new GameError(`${value} ist bei „${CAT_NAMES[state.mode][cat]}“ nicht möglich.`);
       }
       player.scores[cat] = value;
+      // Bonus-Kniffel zählen nur zu einem eingetragenen Kniffel (50).
+      if (cat === 'kniffel' && value !== 50) player.extraYahtzees = 0;
       const byHost = index !== actor;
       pushLog(
         state,
@@ -324,6 +326,7 @@ function applyGameAction(state, token, action) {
       const player = state.players[index];
       if (player.scores[cat] === null) throw new GameError('Dieses Feld ist noch leer.');
       player.scores[cat] = null;
+      if (cat === 'kniffel') player.extraYahtzees = 0;
       const byHost = index !== actor;
       pushLog(
         state,
@@ -515,24 +518,32 @@ export async function createGame(env, mode, entry, options = {}) {
   }
 }
 
-/** Optimistisches Speichern; wirft bei Versionskonflikt. */
-export async function saveGame(env, game) {
-  const result = await env.DB.prepare(
+/**
+ * Optimistisches Speichern; wirft bei Versionskonflikt (Status 409).
+ * Mit syncResults ersetzt derselbe D1-Batch die protokollierten Ergebnisse des Spiels
+ * durch die aktuelle Rangliste (leer, solange das Spiel nicht beendet ist).
+ */
+export async function saveGame(env, game, { syncResults = false } = {}) {
+  const stmts = [];
+  if (syncResults) {
+    // Alle Schreibvorgänge prüfen die alte Version. Das Update steht zuletzt,
+    // damit ein verlorener Versionskonflikt auch die Historie unangetastet lässt.
+    const currentVersion = 'EXISTS (SELECT 1 FROM games WHERE code = ? AND version = ?)';
+    stmts.push(env.DB.prepare(`DELETE FROM game_results WHERE game_code = ? AND ${currentVersion}`)
+      .bind(game.code, game.code, game.version));
+    const results = game.state.status === 'finished' ? game.state.results || [] : [];
+    for (const r of results) {
+      stmts.push(env.DB.prepare(
+        `INSERT INTO game_results (game_code, mode, user_id, player_name, score, placement, player_count, finished_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE ${currentVersion}`
+      ).bind(game.code, game.state.mode, r.userId, r.name, r.total, r.place,
+        game.state.players.length, game.state.finishedAt, game.code, game.version));
+    }
+  }
+  stmts.push(env.DB.prepare(
     'UPDATE games SET state = ?, status = ?, version = version + 1, updated_at = ? WHERE code = ? AND version = ?'
-  )
-    .bind(JSON.stringify(game.state), game.state.status, Date.now(), game.code, game.version)
-    .run();
-  if (!result.meta.changes) throw new GameError('Konflikt – bitte noch einmal versuchen.');
+  ).bind(JSON.stringify(game.state), game.state.status, Date.now(), game.code, game.version));
+  const results = await env.DB.batch(stmts);
+  if (!results.at(-1).meta.changes) throw new GameError('Konflikt – bitte noch einmal versuchen.', 409);
   game.version++;
-}
-
-/** Ergebnisse nach Spielende für eingeloggte Spieler protokollieren. */
-export async function recordResults(env, code, state) {
-  if (!state.results) return;
-  const stmts = state.results.map((r) =>
-    env.DB.prepare(
-      'INSERT INTO game_results (game_code, mode, user_id, player_name, score, placement, player_count, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).bind(code, state.mode, r.userId, r.name, r.total, r.place, state.players.length, state.finishedAt)
-  );
-  if (stmts.length) await env.DB.batch(stmts);
 }
