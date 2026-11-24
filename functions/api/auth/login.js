@@ -12,9 +12,12 @@ export async function onRequestPost({ request, env }) {
 
   // Vor Datenbanksuche und Hashing prüfen: Gesperrte Versuche verraten weder
   // die Existenz des Kontos noch, ob das Passwort gestimmt hätte.
-  const userRule = rule('loginUser', username);
+  // Ohne bekannte IP zählt der strenge Bucket nur nach Benutzername ("*" kann
+  // keine normalisierte IP sein, Schlüssel bleiben also eindeutig).
   const ip = clientIp(request);
-  const rules = ip ? [userRule, rule('loginIp', ip)] : [userRule];
+  const userIpRule = rule('loginUserIp', `${ip || '*'}|${username}`);
+  const rules = [userIpRule, rule('loginUser', username)];
+  if (ip) rules.push(rule('loginIp', ip));
   const attempt = await reserveAttempt(env, rules);
   if (attempt.retryAfter) return tooManyAttempts(attempt.retryAfter);
 
@@ -24,8 +27,11 @@ export async function onRequestPost({ request, env }) {
   const hash = await hashPassword(password, user ? user.salt : DUMMY_SALT);
   if (!user || hash !== user.pass_hash) return apiError('Benutzername oder Passwort ist falsch.', 401);
 
-  // Erfolg zählt nicht als Fehlversuch und setzt den Zähler des Kontos zurück.
-  await releaseAttempts(env, attempt.ids, [userRule.bucket]);
+  // Erfolg zählt nicht als Fehlversuch und setzt den Zähler für diesen Namen von
+  // dieser IP zurück. Der globale Namenszähler bleibt, damit ein Login der echten
+  // Person verteiltem Raten kein neues Kontingent verschafft; der IP-Zähler
+  // bleibt, damit ein Angreifer ihn nicht mit einem eigenen Konto leeren kann.
+  await releaseAttempts(env, attempt.ids, [userIpRule.bucket]);
 
   const token = randomToken(32);
   await env.DB.prepare('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)')

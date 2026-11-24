@@ -72,12 +72,19 @@ Die API zählt Anmelde- und Registrierungsversuche in der D1-Tabelle `auth_attem
 
 | Aktion | Limit |
 | :--- | :--- |
-| Login, Fehlversuche pro Benutzername | 10 in 15 Minuten |
-| Login, Fehlversuche pro IP (IPv6: pro /64-Netz) | 50 in 15 Minuten |
+| Login, Fehlversuche pro Benutzername und IP | 10 in 15 Minuten |
+| Login, Fehlversuche pro Benutzername über alle IPs | 100 in 15 Minuten |
+| Login, Fehlversuche pro IP über alle Benutzernamen | 50 in 15 Minuten |
 | Passwort ändern, falsches aktuelles Passwort pro Konto | 10 in 15 Minuten |
 | Registrierungsversuche pro IP | 20 pro Stunde |
 
-Ein erfolgreicher Login setzt den Zähler des Kontos zurück. Die IP kommt aus `CF-Connecting-IP`; fehlt der Header, gelten nur die Limits pro Konto. Die Werte stehen in `functions/api/_lib/throttle.js`.
+IPv6-Adressen zählen pro /64-Netz, IPv4-gemappte IPv6-Adressen (`::ffff:1.2.3.4`) wie die IPv4-Adresse. Während einer Sperre gilt auch das richtige Passwort als gesperrt, damit die Sperre nichts verrät.
+
+Ein erfolgreicher Login leert nur den Zähler für diesen Benutzernamen von dieser IP. Der Zähler pro Benutzername über alle IPs und der Zähler pro IP behalten ihre Fehlversuche.
+
+Bleibendes Risiko: Wer von einer IP aus einen fremden Benutzernamen falsch eingibt, sperrt ihn nur für diese IP. Ein Angreifer mit vielen IPs kann einen Benutzernamen aber weiterhin für jeweils 15 Minuten sperren, solange er 100 Fehlversuche pro 15 Minuten aufrechterhält.
+
+Die IP kommt aus dem Header `CF-Connecting-IP`. Die Cloudflare-Edge setzt ihn bei jeder Anfrage an den Worker (auf `*.workers.dev` und eigenen Domains) und überschreibt dabei einen vom Client mitgeschickten Wert. Fehlt der Header oder ist er ungültig (nur außerhalb von Cloudflare, z. B. unter `wrangler dev`), entfallen die Limits pro IP; der strenge Login-Zähler gilt dann pro Benutzername allein, die Limits pro Konto gelten weiter. Die Werte stehen in `functions/api/_lib/throttle.js`.
 
 ## Im Code
 

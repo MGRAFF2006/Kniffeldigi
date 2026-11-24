@@ -28,6 +28,8 @@ jobs:
         run: node tests/rules.test.mjs
       - name: Test log snapshots
         run: node --test tests/log-snapshots.test.mjs
+      - name: Test throttle helpers
+        run: node --test tests/throttle.test.mjs
       - name: Test API
         run: |
           npm run dev > /tmp/wuerfelblock-dev.log 2>&1 &

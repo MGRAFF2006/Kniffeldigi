@@ -11,8 +11,16 @@ const MINUTE = 60 * 1000;
 // Limits pro Bucket. Beim Login zählen nur Fehlversuche (ein erfolgreicher
 // Login nimmt seinen Versuch wieder heraus), bei der Registrierung jeder
 // Versuch nach der Formularprüfung (auch "Benutzername vergeben").
+//
+// Login-Fehlversuche zählen dreifach:
+// - loginUserIp: pro Benutzername *und* IP, streng. Ein Angreifer auf einer IP
+//   sperrt den Namen damit nur für sich, nicht für die echte Person anderswo.
+// - loginUser: pro Benutzername über alle IPs, deutlich höher. Bremst verteiltes
+//   Raten; ein Angreifer mit vielen IPs kann den Namen damit weiterhin sperren.
+// - loginIp: pro IP über alle Namen (Passwort-Spraying).
 export const LIMITS = {
-  loginUser: { max: 10, windowMs: 15 * MINUTE },
+  loginUserIp: { max: 10, windowMs: 15 * MINUTE },
+  loginUser: { max: 100, windowMs: 15 * MINUTE },
   loginIp: { max: 50, windowMs: 15 * MINUTE },
   passwordUser: { max: 10, windowMs: 15 * MINUTE },
   registerIp: { max: 20, windowMs: 60 * MINUTE },
@@ -23,22 +31,64 @@ const LONGEST_WINDOW_MS = Math.max(...Object.values(LIMITS).map((l) => l.windowM
 export const TOO_MANY_MESSAGE = 'Zu viele Versuche. Bitte später erneut versuchen.';
 
 /**
- * Client-IP für die Pro-IP-Limits. Cloudflare setzt CF-Connecting-IP immer;
- * fehlt der Header (z. B. außerhalb von Cloudflare), entfallen die IP-Limits,
- * statt alle Clients in einen gemeinsamen Bucket zu sperren.
- * IPv6 wird auf das /64-Präfix gekürzt, weil ein Anschluss meist ein ganzes
- * /64-Netz erhält und sonst beliebig viele Adressen wechseln könnte.
+ * Client-IP für die Pro-IP-Limits. Auf Cloudflare setzt die Edge
+ * CF-Connecting-IP bei jeder Anfrage von außen und überschreibt dabei einen vom
+ * Client mitgeschickten Wert. Fehlt der Header oder ist er keine gültige IP
+ * (nur außerhalb von Cloudflare möglich, z. B. unter `wrangler dev`), entfallen
+ * die IP-Limits, statt alle Clients in einen gemeinsamen Bucket zu sperren.
  */
 export function clientIp(request) {
-  const ip = (request.headers.get('CF-Connecting-IP') || '').trim().toLowerCase();
+  return normalizeIp(request.headers.get('CF-Connecting-IP'));
+}
+
+/**
+ * Bringt eine IP in die Form, nach der gezählt wird:
+ * - IPv4 als a.b.c.d (ohne führende Nullen),
+ * - IPv4-gemappte IPv6-Adressen (::ffff:1.2.3.4 oder ::ffff:102:304) als IPv4,
+ * - übrige IPv6-Adressen als /64-Präfix, weil ein Anschluss meist ein ganzes
+ *   /64-Netz erhält und sonst beliebig viele Adressen wechseln könnte.
+ * Liefert null für alles, was keine gültige IP ist.
+ */
+export function normalizeIp(raw) {
+  const ip = String(raw ?? '').trim().toLowerCase();
   if (!ip) return null;
-  if (!ip.includes(':') || ip.includes('.')) return ip;
-  const [head, tail = ''] = ip.split('::');
-  const headParts = head ? head.split(':') : [];
-  const tailParts = tail ? tail.split(':') : [];
-  const missing = ip.includes('::') ? 8 - headParts.length - tailParts.length : 0;
-  const groups = [...headParts, ...Array(Math.max(missing, 0)).fill('0'), ...tailParts];
-  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':')}::/64`;
+  if (!ip.includes(':')) {
+    const v4 = ipv4Octets(ip);
+    return v4 ? v4.join('.') : null;
+  }
+  const groups = ipv6Groups(ip);
+  if (!groups) return null;
+  if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
+    return [groups[6] >> 8, groups[6] & 0xff, groups[7] >> 8, groups[7] & 0xff].join('.');
+  }
+  return `${groups.slice(0, 4).map((g) => g.toString(16)).join(':')}::/64`;
+}
+
+function ipv4Octets(ip) {
+  const parts = ip.split('.');
+  if (parts.length !== 4 || !parts.every((p) => /^\d{1,3}$/.test(p))) return null;
+  const octets = parts.map(Number);
+  return octets.every((o) => o <= 255) ? octets : null;
+}
+
+// Die acht 16-Bit-Gruppen einer IPv6-Adresse (auch mit "::" und mit
+// IPv4-Schreibweise am Ende) oder null, wenn die Adresse ungültig ist.
+function ipv6Groups(ip) {
+  let text = ip;
+  if (text.includes('.')) {
+    const lastColon = text.lastIndexOf(':');
+    const v4 = ipv4Octets(text.slice(lastColon + 1));
+    if (!v4) return null;
+    text = `${text.slice(0, lastColon + 1)}${((v4[0] << 8) | v4[1]).toString(16)}:${((v4[2] << 8) | v4[3]).toString(16)}`;
+  }
+  const halves = text.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  if (![...head, ...tail].every((g) => /^[0-9a-f]{1,4}$/.test(g))) return null;
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 2 ? missing < 1 : missing !== 0) return null;
+  return [...head, ...Array(missing).fill('0'), ...tail].map((g) => parseInt(g, 16));
 }
 
 /** Eine Regel { bucket, max, windowMs } für ein Limit aus LIMITS und einen Schlüssel. */
@@ -71,12 +121,15 @@ export async function reserveAttempt(env, rules, now = Date.now()) {
   if (inserted.results.length === rules.length) {
     return { ids: inserted.results.map((row) => row.id) };
   }
-  return { retryAfter: await retryAfterSeconds(env, rules, now) };
+  return { retryAfter: await retryAfterSeconds(env, rules) };
 }
 
-// Sekunden, bis jeder gesperrte Bucket wieder unter seinem Limit liegt:
-// Der max-jüngste Versuch im Fenster muss herausfallen.
-async function retryAfterSeconds(env, rules, now) {
+// Sekunden, bis jeder gesperrte Bucket wieder unter seinem Limit liegt: Der
+// max-jüngste Versuch im Fenster (bei vollem Bucket der älteste gezählte) muss
+// herausfallen. Mit frischem "jetzt" gerechnet, weil zwischen Prüfung und
+// dieser Abfrage Zeit vergangen sein kann; begrenzt auf 1 s bis zur Fensterlänge.
+async function retryAfterSeconds(env, rules) {
+  const now = Date.now();
   let waitMs = 0;
   for (const r of rules) {
     const row = await env.DB.prepare(
@@ -85,7 +138,7 @@ async function retryAfterSeconds(env, rules, now) {
     )
       .bind(r.bucket, now - r.windowMs, r.max - 1)
       .first();
-    if (row) waitMs = Math.max(waitMs, row.created_at + r.windowMs - now);
+    if (row) waitMs = Math.max(waitMs, Math.min(row.created_at + r.windowMs - now, r.windowMs));
   }
   return Math.max(1, Math.ceil(waitMs / 1000));
 }

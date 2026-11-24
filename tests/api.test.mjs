@@ -53,11 +53,13 @@ async function authCall(path, body, { clientIp, session } = {}) {
   return { status: r.status, data: await r.json(), retryAfter: r.headers.get('Retry-After') };
 }
 
-function assertThrottled(r, label) {
+// Retry-After muss in (0, Fensterlänge] liegen: 15 min für Login und
+// Passwort, 1 h für Registrierung.
+function assertThrottled(r, label, windowSeconds = 900) {
   assert.equal(r.status, 429, `${label}: ${JSON.stringify(r.data)}`);
   assert.equal(r.data.error, 'Zu viele Versuche. Bitte später erneut versuchen.', `${label}: deutsche Meldung`);
   const seconds = Number(r.retryAfter);
-  assert.ok(Number.isInteger(seconds) && seconds >= 1 && seconds <= 3600, `${label}: Retry-After (${r.retryAfter})`);
+  assert.ok(Number.isInteger(seconds) && seconds >= 1 && seconds <= windowSeconds, `${label}: Retry-After (${r.retryAfter})`);
 }
 
 const victim = `rl_${stamp}`;
@@ -65,18 +67,32 @@ res = await authCall('/auth/register', { username: victim, password: 'richtig123
 assert.equal(res.status, 201, `Registrierung Opfer: ${JSON.stringify(res.data)}`);
 const victimSession = res.data.token;
 
-// 10 Fehlversuche pro Benutzername sind erlaubt, danach ist auch das richtige
-// Passwort gesperrt – egal von welcher IP.
+// 10 Fehlversuche pro Benutzername und IP sind erlaubt, danach ist von dieser
+// IP auch das richtige Passwort gesperrt (in jeder Schreibweise).
 for (let i = 1; i <= 10; i++) {
   res = await authCall('/auth/login', { username: victim, password: `falsch${i}` }, { clientIp: ip(1) });
   assert.equal(res.status, 401, `Fehlversuch ${i} noch normal abgelehnt`);
 }
 assertThrottled(await authCall('/auth/login', { username: victim, password: 'richtig123' }, { clientIp: ip(1) }), 'Login nach 10 Fehlversuchen');
-assertThrottled(await authCall('/auth/login', { username: victim.toUpperCase(), password: 'richtig123' }, { clientIp: ip(2) }), 'Sperre gilt pro Konto, unabhängig von IP und Schreibweise');
+assertThrottled(await authCall('/auth/login', { username: victim.toUpperCase(), password: 'richtig123' }, { clientIp: ip(1, 2) }), 'Sperre gilt fürs ganze /64 und unabhängig von der Schreibweise');
+
+// Die echte Person kann sich von einer anderen IP trotzdem anmelden.
+res = await authCall('/auth/login', { username: victim, password: 'richtig123' }, { clientIp: ip(2) });
+assert.equal(res.status, 200, `Opfer von anderer IP nicht ausgesperrt: ${JSON.stringify(res.data)}`);
 
 // Andere Konten von derselben IP sind nicht betroffen.
 res = await authCall('/auth/login', { username: `tester_${stamp}`, password: 'geheim123' }, { clientIp: ip(1) });
 assert.equal(res.status, 200, 'Anderer Benutzername trotz Sperre einloggbar');
+
+// Verteiltes Raten: 100 Fehlversuche pro Benutzername über alle IPs sperren den
+// Namen überall. Bisher 10 von ip(1), dazu 9 weitere Netze mit je 10.
+for (let n = 10; n <= 18; n++) {
+  for (let i = 1; i <= 10; i++) {
+    res = await authCall('/auth/login', { username: victim, password: `verteilt${i}` }, { clientIp: ip(n) });
+    assert.equal(res.status, 401, `Verteilter Fehlversuch ${n}/${i} noch normal abgelehnt`);
+  }
+}
+assertThrottled(await authCall('/auth/login', { username: victim, password: 'richtig123' }, { clientIp: ip(19) }), 'Login nach 100 verteilten Fehlversuchen');
 
 // Unbekannte Benutzernamen verhalten sich gleich (keine Kontenerkennung).
 for (let i = 1; i <= 10; i++) {
@@ -86,15 +102,28 @@ for (let i = 1; i <= 10; i++) {
 }
 assertThrottled(await authCall('/auth/login', { username: `ghost_${stamp}`, password: 'egal1234' }, { clientIp: ip(3) }), 'Unbekannter Benutzer ebenfalls gesperrt');
 
-// Ein erfolgreicher Login setzt den Zähler des Kontos zurück.
+// Ein erfolgreicher Login leert genau den Zähler für Name + IP: danach sind
+// wieder volle 10 Fehlversuche möglich (nicht nur einer). Der IP-Zähler behält
+// alle Fehlversuche: 9 + 10 + 31 = 50, danach ist die IP gesperrt.
 const typo = `typo_${stamp}`;
 res = await authCall('/auth/register', { username: typo, password: 'richtig123' }, { clientIp: ip(4) });
 assert.equal(res.status, 201);
-for (let i = 1; i <= 9; i++) await authCall('/auth/login', { username: typo, password: 'vertippt' }, { clientIp: ip(4) });
+for (let i = 1; i <= 9; i++) {
+  res = await authCall('/auth/login', { username: typo, password: 'vertippt' }, { clientIp: ip(4) });
+  assert.equal(res.status, 401, `Vertipper ${i}`);
+}
 res = await authCall('/auth/login', { username: typo, password: 'richtig123' }, { clientIp: ip(4) });
 assert.equal(res.status, 200, 'Login nach 9 Fehlversuchen noch möglich');
-res = await authCall('/auth/login', { username: typo, password: 'vertippt' }, { clientIp: ip(4) });
-assert.equal(res.status, 401, 'Zähler nach erfolgreichem Login zurückgesetzt');
+for (let i = 1; i <= 10; i++) {
+  res = await authCall('/auth/login', { username: typo, password: 'vertippt' }, { clientIp: ip(4) });
+  assert.equal(res.status, 401, `Fehlversuch ${i} nach erfolgreichem Login wieder erlaubt`);
+}
+assertThrottled(await authCall('/auth/login', { username: typo, password: 'richtig123' }, { clientIp: ip(4) }), 'Nach 10 neuen Fehlversuchen wieder gesperrt');
+for (let i = 1; i <= 31; i++) {
+  res = await authCall('/auth/login', { username: `typo_spray_${stamp}_${i}`, password: 'egal1234' }, { clientIp: ip(4) });
+  assert.equal(res.status, 401, `IP-Fehlversuch ${19 + i} noch normal abgelehnt`);
+}
+assertThrottled(await authCall('/auth/login', { username: `tester_${stamp}`, password: 'geheim123' }, { clientIp: ip(4) }), 'IP-Zähler durch Erfolg nicht geleert');
 
 // Pro IP (IPv6: /64-Netz) sind 50 Fehlversuche über beliebige Namen erlaubt.
 for (let i = 1; i <= 50; i++) {
@@ -122,7 +151,7 @@ for (let i = 2; i <= 20; i++) {
   res = await authCall('/auth/register', { username: `reg_${stamp}`, password: 'geheim123' }, { clientIp: ip(7) });
   assert.equal(res.status, 409, `Registrierungsversuch ${i} noch normal beantwortet`);
 }
-assertThrottled(await authCall('/auth/register', { username: `reg2_${stamp}`, password: 'geheim123' }, { clientIp: ip(7) }), 'Registrierung nach 20 Versuchen');
+assertThrottled(await authCall('/auth/register', { username: `reg2_${stamp}`, password: 'geheim123' }, { clientIp: ip(7) }), 'Registrierung nach 20 Versuchen', 3600);
 res = await authCall('/auth/register', { username: `reg2_${stamp}`, password: 'geheim123' }, { clientIp: ip(8) });
 assert.equal(res.status, 201, 'Registrierung von anderer IP möglich');
 
