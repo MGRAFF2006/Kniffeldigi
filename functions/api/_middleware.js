@@ -1,9 +1,8 @@
 // Middleware für alle /api-Routen: legt das Schema beim ersten Request an
 // und fängt Fehler als saubere JSON-Antworten ab.
 
-import { GameError } from './_lib/game.js';
 import { SCHEMA } from './_lib/schema.js';
-import { apiError } from './_lib/util.js';
+import { RequestError, apiError } from './_lib/util.js';
 
 let schemaReady = false;
 
@@ -20,7 +19,7 @@ export async function onRequest(context) {
     }
     return await next();
   } catch (err) {
-    if (err instanceof GameError) return apiError(err.message, 400);
+    if (err instanceof RequestError) return apiError(err.message, err.status);
     console.error('API-Fehler:', err);
     return apiError('Interner Fehler. Bitte später erneut versuchen.', 500);
   }

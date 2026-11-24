@@ -138,7 +138,7 @@ assert.equal(Object.keys(res.data.state.players[0].scores).length, 13, 'Kniffel-
 
 // ===== Analogmodus (Hauptnutzung): analog würfeln, digital eintragen =====
 
-res = await call('POST', '/games', { body: { mode: 'kniffel', name: 'Melanie' } });
+res = await call('POST', '/games', { body: { mode: 'kniffel', name: 'Melanie' }, session });
 assert.equal(res.status, 201, 'Analogspiel anlegen');
 const mCode = res.data.code;
 const mHost = res.data.playerToken;
@@ -217,6 +217,8 @@ for (const [playerIndex, token] of [[0, mHost], [1, mGuest]].map((x) => x)) {
 assert.equal(mState.status, 'finished', 'Analogspiel automatisch beendet');
 assert.equal(mState.results.length, 2, 'Analog: Ergebnisliste');
 assert.equal(mState.results[0].name, 'Melanie', 'Analog: Melanie gewinnt (53+35+50... > 23)');
+res = await call('GET', '/history', { session });
+assert.equal(res.data.games.filter((g) => g.game_code === mCode).length, 1, 'Analog: genau ein protokolliertes Ergebnis');
 
 // Auch nach dem automatischen Ende kann ein Fehler rückgängig gemacht werden.
 res = await call('POST', `/games/${mCode}/action`, {
@@ -226,12 +228,16 @@ res = await call('POST', `/games/${mCode}/action`, {
 assert.equal(res.status, 200, 'Analog: Eintrag nach Spielende rückgängig machen');
 assert.equal(res.data.state.status, 'playing', 'Analog: Spiel für Korrektur wieder geöffnet');
 assert.equal(res.data.state.players[0].scores.ones, null, 'Analog: Feld nach Ende wieder leer');
+res = await call('GET', '/history', { session });
+assert.equal(res.data.games.some((g) => g.game_code === mCode), false, 'Analog: Ergebnis nach Wiederöffnung entfernt');
 res = await call('POST', `/games/${mCode}/action`, {
   body: { type: 'enter', category: 'ones', value: 3 },
   playerToken: mHost,
 });
 assert.equal(res.status, 200, 'Analog: Korrektur nach Spielende neu eintragen');
 assert.equal(res.data.state.status, 'finished', 'Analog: Spiel nach Korrektur wieder beendet');
+res = await call('GET', '/history', { session });
+assert.equal(res.data.games.filter((g) => g.game_code === mCode).length, 1, 'Analog: neu beendet ohne doppelte Historie');
 
 // Nach Spielende kein Beitritt mehr.
 res = await call('POST', `/games/${mCode}/join`, { body: { name: 'Spät' } });
@@ -250,6 +256,8 @@ assert.ok(res.data.state.log.every((e) => e.id != null && e.canRevert), 'Analog:
 
 // Revert auf einen früheren Protokolleintrag.
 const joinLog = res.data.state.log.find((e) => e.text.includes('Peter ist dem Spiel beigetreten'));
+const historyAfterReset = await call('GET', '/history', { session });
+assert.equal(historyAfterReset.data.games.some((g) => g.game_code === mCode), false, 'Analog: Reset entfernt Ergebnis');
 assert.ok(joinLog, 'Analog: Beitritts-Log gefunden');
 res = await call('POST', `/games/${mCode}/action`, { body: { type: 'enter', category: 'ones', value: 5 }, playerToken: mHost });
 assert.equal(res.data.state.players[0].scores.ones, 5);
@@ -288,6 +296,21 @@ res = await call('POST', `/games/${nCode}/action`, {
 assert.equal(res.status, 400, 'Ohne Papierblock kein Eintrag für andere');
 res = await call('POST', `/games/${nCode}/action`, { body: { type: 'addSeat', name: 'X' }, playerToken: nHost });
 assert.equal(res.status, 400, 'Ohne Papierblock kein Platz hinzufügen');
+
+// Gleichzeitige Beitritte und unabhängige Einträge dürfen sich nicht überschreiben.
+const joined = await Promise.all(['Anna', 'Berta'].map((name) =>
+  call('POST', `/games/${nCode}/join`, { body: { name } })
+));
+assert.ok(joined.every((r) => r.status === 200), 'Gleichzeitige Beitritte werden wiederholt');
+const entered = await Promise.all(joined.map((r, i) =>
+  call('POST', `/games/${nCode}/action`, {
+    body: { type: 'enter', category: 'ones', value: i + 1 }, playerToken: r.data.playerToken,
+  })
+));
+assert.ok(entered.every((r) => r.status === 200), 'Gleichzeitige Einträge werden wiederholt');
+res = await call('GET', `/games/${nCode}/state`);
+assert.equal(res.data.state.players.find((p) => p.name === 'Anna').scores.ones, 1);
+assert.equal(res.data.state.players.find((p) => p.name === 'Berta').scores.ones, 2);
 
 // --- Einstellungen: Name & Passwort ändern ---
 res = await call('PATCH', '/auth/me', { body: { displayName: 'Neuer Name' }, session });

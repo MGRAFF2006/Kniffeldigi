@@ -48,7 +48,7 @@ In einem zweiten Terminal, während der Dev-Server läuft:
 npm test
 ```
 
-Das führt die Regeltests und den API-End-to-End-Test aus. Nur die Regeltests:
+Das führt Regel-, Protokoll- und Persistenztests (Node.js 22.13+, nutzt `node:sqlite`) sowie den API-End-to-End-Test aus. Nur die Regeltests:
 
 ```bash
 node tests/rules.test.mjs
