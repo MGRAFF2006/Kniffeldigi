@@ -93,7 +93,7 @@ function renderNav() {
       const session = getSession();
       try { await api.logout(); } catch {}
       if (session !== getSession()) return;
-      if (!isCurrentView(navigation, session)) {
+      if (!isCurrentView(navigation)) {
         // Inzwischen läuft eine andere Ansicht – nicht wegnavigieren oder Eingaben verwerfen.
         endSession();
         return;
@@ -111,7 +111,6 @@ function renderNav() {
 
 function viewLanding() {
   const navigation = navigationGeneration;
-  const session = getSession();
   document.title = 'Würfelblock – Kniffel & Yatzy online';
   const name = defaultName();
   app.innerHTML = `
@@ -252,11 +251,12 @@ function viewLanding() {
     try {
       rememberName(playerName);
       const data = await api.joinGame(code, playerName);
-      setPlayerToken(data.code, data.playerToken);
-      if (!isCurrentView(navigation, session)) return;
+      // Ein verspäteter Beitritt darf nicht den Platz ersetzen, den der Nutzer in diesem Spiel schon nutzt.
+      if (isCurrentView(navigation) || !playerTokenFor(data.code)) setPlayerToken(data.code, data.playerToken);
+      if (!isCurrentView(navigation)) return;
       location.hash = `#/game/${data.code}`;
     } catch (err) {
-      if (!isCurrentView(navigation, session)) return;
+      if (!isCurrentView(navigation)) return;
       errEl.textContent = err.message;
     }
   });
@@ -268,10 +268,10 @@ function viewLanding() {
     if (code.length < 4) { errEl.textContent = 'Bitte gib den 5-stelligen Spielcode ein.'; return; }
     try {
       await api.gameState(code);
-      if (!isCurrentView(navigation, session)) return;
+      if (!isCurrentView(navigation)) return;
       location.hash = `#/watch/${code}`;
     } catch (err) {
-      if (!isCurrentView(navigation, session)) return;
+      if (!isCurrentView(navigation)) return;
       errEl.textContent = err.message;
     }
   });
@@ -286,10 +286,10 @@ function viewLanding() {
       const hostPaper = selectedEntry === 'manual' && hostPaperInput.checked;
       const data = await api.createGame(selectedMode, playerName, selectedEntry, hostPaper);
       setPlayerToken(data.code, data.playerToken);
-      if (!isCurrentView(navigation, session)) return;
+      if (!isCurrentView(navigation)) return;
       location.hash = `#/game/${data.code}`;
     } catch (err) {
-      if (!isCurrentView(navigation, session)) return;
+      if (!isCurrentView(navigation)) return;
       errEl.textContent = err.message;
     }
   });
@@ -307,22 +307,26 @@ function currentHash() {
   return location.hash || '#/';
 }
 
-// Eine Ansicht gehört noch dem Nutzer, solange weder Route, URL (hashchange kann noch
-// ausstehen) noch Konto-Sitzung gewechselt haben.
-function isCurrentView(navigation, session) {
-  return navigation === navigationGeneration && currentHash() === routedHash && session === getSession();
+// Eine Ansicht gehört noch dem Nutzer, solange weder Route noch URL gewechselt haben
+// (ein hashchange kann noch ausstehen).
+function isCurrentView(navigation) {
+  return navigation === navigationGeneration && currentHash() === routedHash;
 }
 
 // Spielzugriff läuft über den Spieler-Token, nicht über die Konto-Sitzung.
 function isCurrentGame(game) {
-  return currentGame === game;
+  return currentGame === game && currentHash() === routedHash;
 }
 
-// Konto-Sitzung ist abgelaufen oder beendet: nur die Einstellungen zeigen Kontodaten.
-function endSession() {
-  setSession(null);
+// Kontodaten zeigen nur Navigation und Einstellungen; beide folgen jedem Sitzungswechsel.
+function sessionChanged() {
   renderNav();
   if (currentHash().startsWith('#/settings')) route();
+}
+
+function endSession() {
+  setSession(null);
+  sessionChanged();
 }
 
 function stopPolling() {
@@ -882,19 +886,22 @@ function openEntryModal(state, cat, current = null, forPlayer = null) {
 
 // ===== Auth =====
 
-// Eine erfolgreiche Anmeldung gilt, solange keine andere Sitzung sie ersetzt hat; nur
-// Weiterleitung und Hinweis entfallen, wenn der Nutzer schon woanders ist.
-function signedIn(navigation, session, data) {
-  if (session !== getSession()) return false;
-  const current = isCurrentView(navigation, session);
+// Eine erfolgreiche Anmeldung gilt, solange keine andere Sitzung sie seit dem Absenden
+// ersetzt hat; Weiterleitung und Hinweis entfallen, wenn der Nutzer schon woanders ist.
+function signedIn(navigation, sessionAtSubmit, data) {
+  if (sessionAtSubmit !== getSession()) return false;
+  const current = isCurrentView(navigation);
   setSession(data.token, data.user);
+  if (!current) {
+    sessionChanged();
+    return false;
+  }
   renderNav();
-  return current;
+  return true;
 }
 
 function viewLogin() {
   const navigation = navigationGeneration;
-  const session = getSession();
   document.title = 'Anmelden – Würfelblock';
   app.innerHTML = `
     <section class="sheet auth-wrap">
@@ -913,13 +920,14 @@ function viewLogin() {
     e.preventDefault();
     const errEl = document.getElementById('lg-error');
     errEl.textContent = '';
+    const session = getSession();
     try {
       const data = await api.login(document.getElementById('lg-user').value.trim(), document.getElementById('lg-pass').value);
       if (!signedIn(navigation, session, data)) return;
       toast(`Hallo, ${data.user.displayName}!`);
       location.hash = '#/';
     } catch (err) {
-      if (!isCurrentView(navigation, session)) return;
+      if (!isCurrentView(navigation)) return;
       errEl.textContent = err.message;
     }
   });
@@ -927,7 +935,6 @@ function viewLogin() {
 
 function viewRegister() {
   const navigation = navigationGeneration;
-  const session = getSession();
   document.title = 'Registrieren – Würfelblock';
   app.innerHTML = `
     <section class="sheet auth-wrap">
@@ -949,13 +956,14 @@ function viewRegister() {
     errEl.textContent = '';
     const username = document.getElementById('rg-user').value.trim();
     const display = document.getElementById('rg-display').value.trim() || username;
+    const session = getSession();
     try {
       const data = await api.register(username, display, document.getElementById('rg-pass').value);
       if (!signedIn(navigation, session, data)) return;
       toast(`Willkommen, ${data.user.displayName}! Dein Konto ist bereit.`);
       location.hash = '#/';
     } catch (err) {
-      if (!isCurrentView(navigation, session)) return;
+      if (!isCurrentView(navigation)) return;
       errEl.textContent = err.message;
     }
   });
@@ -1033,6 +1041,8 @@ async function viewSettings() {
   if (user) {
     document.getElementById('profile-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      // Das Formular gehört zum angezeigten Konto – nie mit einer anderen Sitzung absenden.
+      if (session !== getSession()) { route(); return; }
       const errEl = document.getElementById('st-error');
       errEl.textContent = '';
       try {
@@ -1041,25 +1051,26 @@ async function viewSettings() {
         // Gespeichert ist gespeichert – auch wenn die Ansicht inzwischen gewechselt hat.
         setSession(session, data.user);
         renderNav();
-        if (!isCurrentView(navigation, session)) return;
+        if (!isCurrentView(navigation)) return;
         toast('Anzeigename gespeichert!');
       } catch (err) {
-        if (!isCurrentView(navigation, session)) return;
+        if (!isCurrentView(navigation)) return;
         errEl.textContent = err.message;
       }
     });
 
     document.getElementById('pass-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (session !== getSession()) { route(); return; }
       const errEl = document.getElementById('st-error');
       errEl.textContent = '';
       try {
         await api.changePassword(document.getElementById('st-oldpass').value, document.getElementById('st-newpass').value);
-        if (!isCurrentView(navigation, session)) return;
+        if (!isCurrentView(navigation)) return;
         document.getElementById('pass-form').reset();
         toast('Passwort geändert!');
       } catch (err) {
-        if (!isCurrentView(navigation, session)) return;
+        if (!isCurrentView(navigation)) return;
         errEl.textContent = err.message;
       }
     });
@@ -1067,7 +1078,7 @@ async function viewSettings() {
     // Historie & Statistik laden
     try {
       const { games, stats } = await api.history();
-      if (!isCurrentView(navigation, session)) return;
+      if (!isCurrentView(navigation) || session !== getSession()) return;
       const statHTML = stats.length
         ? `<div class="stats-row">${stats
             .map(
@@ -1103,7 +1114,7 @@ async function viewSettings() {
           </table>
         </div></section>`;
     } catch (err) {
-      if (!isCurrentView(navigation, session)) return;
+      if (!isCurrentView(navigation) || session !== getSession()) return;
       if (err.status === 401) endSession();
     }
   }
@@ -1157,3 +1168,7 @@ renderNav();
 route();
 validateSession();
 window.addEventListener('hashchange', route);
+// An- oder Abmeldung in einem anderen Tab: Kontoanzeige hier nachziehen.
+window.addEventListener('storage', (e) => {
+  if (e.key === null || e.key === 'wb_session') sessionChanged();
+});

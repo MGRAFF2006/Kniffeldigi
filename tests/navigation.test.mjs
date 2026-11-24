@@ -84,15 +84,16 @@ function fixture() {
     assert.ok(pending.length, 'expected an API request');
     return pending.shift();
   };
-  async function open(code, version = 1) {
-    probe.stopPolling();
-    const opened = probe.viewGame(code, true);
-    take().resolve(game(code, version));
-    await opened;
-  }
+  // Let the actual fetch/json continuations of resolved requests run.
+  const flush = () => new Promise(resolve => setImmediate(resolve));
   const navigate = hash => { location.hash = hash; probe.route(); };
+  async function open(code, version = 1) {
+    navigate(`#/watch/${code}`);
+    take().resolve(game(code, version));
+    await flush();
+  }
   const click = (id, type = 'click') => elements.get(id).listeners[type]({ preventDefault() {} });
-  return { probe, take, open, navigate, click, location, elements, renders, notices, timeouts, intervals, sandbox, pending };
+  return { probe, take, open, navigate, flush, click, location, elements, renders, notices, timeouts, intervals, sandbox, pending };
 }
 
 function game(code, version) {
@@ -120,28 +121,28 @@ test('old polls cannot overwrite another game or a reopened instance of the same
 
 test('pending initial loads and errors cannot replace a newer route or create another poller', async () => {
   const f = fixture();
-  const oldOpen = f.probe.viewGame('AAAAA', false);
+  f.navigate('#/game/AAAAA');
   const response = f.take();
   await f.open('BBBBB');
   response.resolve(game('AAAAA', 8));
-  await oldOpen;
+  await f.flush();
   assert.equal(f.renders.length, 1);
   assert.equal(f.intervals.size, 1);
-  const failedOpen = f.probe.viewGame('CCCCC', false);
+  f.navigate('#/game/CCCCC');
   const failure = f.take();
   f.navigate('#/login');
   const login = f.elements.get('app').innerHTML;
   failure.resolve({ error: 'old load failed' }, 404);
-  await failedOpen;
+  await f.flush();
   assert.equal(f.elements.get('app').innerHTML, login);
   assert.equal(f.intervals.size, 0);
 });
 
 test('active load errors still render and unchanged poll responses remain harmless', async () => {
   const f = fixture();
-  const open = f.probe.viewGame('AAAAA', false);
+  f.navigate('#/game/AAAAA');
   f.take().resolve({ error: 'missing game' }, 404);
-  await open;
+  await f.flush();
   assert.match(f.elements.get('app').innerHTML, /missing game/);
   await f.open('BBBBB');
   const poll = f.probe.pollGame();
@@ -351,9 +352,9 @@ test('account session changes do not freeze a loading or open game', async () =>
 test('late password and profile saves do not reset new forms or display stale notices', async () => {
   const f = fixture();
   f.probe.setSession('session', { username: 'fixture', displayName: 'Fixture' });
-  const settings = f.probe.viewSettings();
+  f.navigate('#/settings');
   f.take().resolve({ games: [], stats: [] });
-  await settings;
+  await f.flush();
   const password = f.click('pass-form', 'submit');
   const passwordResponse = f.take();
   const profile = f.click('profile-form', 'submit');
@@ -416,6 +417,13 @@ test('logout clears only its session and preserves a newer route without stale n
   assert.equal(f.elements.get('lg-user'), typed, 'the login form is not rebuilt');
   assert.equal(typed.value, 'typed-user');
   assert.deepEqual(f.notices, []);
+  // The preserved form still works after the session it was opened under has ended.
+  const login = f.click('login-form', 'submit');
+  f.take().resolve({ token: 'next-session', user: { displayName: 'Next' } });
+  await login;
+  assert.equal(f.probe.getSession(), 'next-session');
+  assert.equal(f.location.hash, '#/');
+  f.notices.length = 0;
 
   f.probe.setSession('old-session', { displayName: 'Old' });
   f.probe.renderNav();
@@ -459,6 +467,82 @@ test('a completed join preserves its player token without redirecting a newer ro
   f.elements.get('join-code').value = 'AAAAA';
   await f.click('btn-join');
   assert.equal(f.location.hash, '#/game/AAAAA');
+});
+
+test('a late login re-renders settings for the new account; old account forms cannot submit', async () => {
+  const f = fixture();
+  f.probe.setSession('session-a', { username: 'user-a', displayName: 'A' });
+  f.navigate('#/login');
+  const login = f.click('login-form', 'submit');
+  const loginResponse = f.take();
+  f.navigate('#/settings');
+  const historyA = f.take();
+  loginResponse.resolve({ token: 'session-b', user: { username: 'user-b', displayName: 'B' } });
+  await login;
+  assert.equal(f.probe.getSession(), 'session-b');
+  assert.match(f.elements.get('app').innerHTML, /@user-b/);
+  assert.equal(f.take().options.headers.Authorization, 'Bearer session-b');
+  historyA.resolve({ games: [], stats: [{ mode: 'history-of-a', games: 1 }] });
+  await f.flush();
+  assert.doesNotMatch(f.elements.get('history-area').innerHTML ?? '', /history-of-a/);
+  assert.equal(f.location.hash, '#/settings');
+  assert.deepEqual(f.notices, []);
+
+  // Another tab switched accounts without this tab noticing: B's form must not save as C.
+  const submitProfile = f.elements.get('profile-form').listeners.submit;
+  const submitPassword = f.elements.get('pass-form').listeners.submit;
+  f.probe.setSession('session-c', { username: 'user-c', displayName: 'C' });
+  await submitProfile({ preventDefault() {} });
+  await submitPassword({ preventDefault() {} });
+  const requests = f.pending.splice(0);
+  assert.ok(requests.every(request => request.url === '/api/history'), 'no profile or password write');
+  assert.match(f.elements.get('app').innerHTML, /@user-c/);
+});
+
+test('landing actions still navigate after startup clears an expired session', async () => {
+  const f = fixture();
+  f.probe.setSession('expired-session', { username: 'fixture', displayName: 'Fixture' });
+  f.navigate('#/');
+  const validation = f.probe.validateSession();
+  f.take().resolve({ error: 'expired' }, 401);
+  await validation;
+  assert.equal(f.probe.getSession(), null);
+  f.elements.get('create-name').value = 'Fixture';
+  const create = f.click('btn-create');
+  f.take().resolve({ code: 'NEWGM', playerToken: 'seat-token' });
+  await create;
+  assert.equal(f.location.hash, '#/game/NEWGM');
+});
+
+test('a late join cannot replace the seat a newer join claimed in the same game', async () => {
+  const f = fixture();
+  f.navigate('#/');
+  f.elements.get('join-code').value = 'AAAAA';
+  f.elements.get('join-name').value = 'First Seat';
+  const firstJoin = f.click('btn-join');
+  const first = f.take();
+  f.navigate('#/login');
+  f.navigate('#/');
+  f.elements.get('join-code').value = 'AAAAA';
+  f.elements.get('join-name').value = 'Second Seat';
+  const secondJoin = f.click('btn-join');
+  f.take().resolve({ code: 'AAAAA', playerToken: 'second-seat' });
+  await secondJoin;
+  assert.equal(f.location.hash, '#/game/AAAAA');
+  first.resolve({ code: 'AAAAA', playerToken: 'first-seat' });
+  await firstJoin;
+  assert.equal(f.sandbox.localStorage.getItem('wb_player_AAAAA'), 'second-seat');
+});
+
+test('game errors after a URL change are not shown on the next page', async () => {
+  const f = fixture();
+  await f.open('AAAAA');
+  const action = f.probe.doAction({ type: 'roll' });
+  const response = f.take();
+  f.location.hash = '#/settings'; // hashchange still queued
+  response.resolve({ error: 'Konflikt' }, 409);
+  await action;
+  assert.deepEqual(f.notices, []);
 });
 
 test('a pending completion cannot override a URL change whose hashchange is still queued', async () => {
