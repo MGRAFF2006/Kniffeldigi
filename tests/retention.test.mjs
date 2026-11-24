@@ -152,3 +152,14 @@ test('refuses to run with an invalid clock value instead of guessing a cutoff', 
     await assert.rejects(runRetentionCleanup(env, now), /Ungültiger Zeitpunkt/);
   }
 });
+
+test('an integer beyond the Date range deletes nothing', async () => {
+  const { db, env } = freshEnv();
+  await runRetentionCleanup(env, NOW); // legt das Schema an
+  insertSession(db, 'valid', NOW + DAY);
+  insertGame(db, 'FRESH', 'playing', NOW);
+  // Sicherer Integer, aber kein darstellbares Datum: würde sonst alles als „abgelaufen“ sehen.
+  await assert.rejects(runRetentionCleanup(env, 8_640_000_000_000_001), /Ungültiger Zeitpunkt/);
+  assert.deepEqual(column(db, 'SELECT token FROM sessions'), ['valid']);
+  assert.deepEqual(column(db, 'SELECT code FROM games'), ['FRESH']);
+});

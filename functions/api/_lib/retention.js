@@ -60,18 +60,22 @@ async function deleteInBatches(env, sql, threshold) {
  * @param {number} now Zeitpunkt in ms seit Epoche (wie Date.now()).
  */
 export async function runRetentionCleanup(env, now) {
-  if (!Number.isSafeInteger(now) || now <= 0) {
+  // Vollständig prüfen, bevor irgendetwas gelöscht wird: Auch eine ganze Zahl außerhalb
+  // des Date-Bereichs (> 8.64e15) ist kein gültiger Zeitpunkt.
+  const gameCutoff = now - ABANDONED_GAME_AGE_DAYS * DAY_MS;
+  if (!Number.isSafeInteger(now) || now <= 0 || Number.isNaN(new Date(now).getTime())) {
     throw new Error(`Ungültiger Zeitpunkt für die Datenbereinigung: ${now}`);
   }
+  const nowIso = new Date(now).toISOString();
+  const gameCutoffIso = new Date(gameCutoff).toISOString();
   await ensureSchema(env);
 
-  const gameCutoff = now - ABANDONED_GAME_AGE_DAYS * DAY_MS;
   const sessions = await deleteInBatches(env, DELETE_EXPIRED_SESSIONS, now);
   const games = await deleteInBatches(env, DELETE_ABANDONED_GAMES, gameCutoff);
 
   const summary = {
-    now: new Date(now).toISOString(),
-    gameCutoff: new Date(gameCutoff).toISOString(),
+    now: nowIso,
+    gameCutoff: gameCutoffIso,
     expiredSessionsDeleted: sessions.deleted,
     abandonedGamesDeleted: games.deleted,
     // false = Batch-Limit erreicht, der Rest folgt beim nächsten Lauf.
