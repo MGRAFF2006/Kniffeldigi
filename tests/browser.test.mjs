@@ -9,7 +9,6 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
@@ -25,32 +24,27 @@ let base;
 let browser;
 const browserErrors = [];
 
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.unref();
-    probe.on('error', reject);
-    probe.listen(0, '127.0.0.1', () => {
-      const { port } = probe.address();
-      probe.close(() => resolve(port));
-    });
-  });
-}
-
 async function startServer() {
   const dir = await mkdtemp(join(tmpdir(), 'wuerfelblock-browser-'));
-  const port = await freePort();
-  const inspectorPort = await freePort();
   const log = [];
   // Eigene Prozessgruppe, damit beim Aufräumen auch workerd sicher mit beendet wird.
   const proc = spawn(
     process.execPath,
     [
       'node_modules/wrangler/bin/wrangler.js', 'dev', '--local',
-      '--ip', '127.0.0.1', '--port', String(port), '--inspector-port', String(inspectorPort),
+      // Port 0: wrangler wählt selbst freie Ports und meldet den tatsächlichen in der Ready-Zeile.
+      // So kann kein anderer Server auf einem vorab gewählten Port den Test beantworten.
+      '--ip', '127.0.0.1', '--port', '0', '--inspector-port', '0',
       '--persist-to', join(dir, 'state'), '--show-interactive-dev-session=false',
     ],
-    { cwd: new URL('..', import.meta.url), detached: true, env: { ...process.env, WRANGLER_SEND_METRICS: 'false' } }
+    { cwd: new URL('..', import.meta.url), detached: true, env: {
+      ...process.env,
+      WRANGLER_SEND_METRICS: 'false',
+      // Feste Log-Einstellungen, damit die Ready-Zeile immer und ohne Farbcodes erscheint.
+      WRANGLER_LOG: 'info',
+      FORCE_COLOR: '0',
+      NO_COLOR: '1',
+    } }
   );
   proc.stdout.on('data', (chunk) => log.push(chunk));
   proc.stderr.on('data', (chunk) => log.push(chunk));
@@ -58,19 +52,16 @@ async function startServer() {
   const handle = { proc, dir, exited, log: () => Buffer.concat(log).toString() };
   server = handle;
 
-  const url = `http://127.0.0.1:${port}`;
+  // Bereit ist nur der hier gestartete Prozess, wenn er selbst "Ready on <URL>" meldet.
+  // Kein HTTP-Probe: ein geerbter Proxy (z. B. NODE_USE_ENV_PROXY) könnte ihn umleiten.
   const deadline = Date.now() + SERVER_START_TIMEOUT;
   while (Date.now() < deadline) {
     if (proc.exitCode !== null) throw new Error(`wrangler dev beendet (Code ${proc.exitCode}):\n${handle.log()}`);
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(1000) });
-      if (res.ok) return url;
-    } catch {
-      /* noch nicht bereit */
-    }
+    const ready = handle.log().match(/Ready on (http:\/\/127\.0\.0\.1:\d+)/);
+    if (ready) return ready[1];
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error(`wrangler dev nach ${SERVER_START_TIMEOUT / 1000} s nicht erreichbar:\n${handle.log()}`);
+  throw new Error(`wrangler dev nach ${SERVER_START_TIMEOUT / 1000} s nicht bereit:\n${handle.log()}`);
 }
 
 function killServerGroup(signal) {
@@ -105,9 +96,11 @@ process.once('SIGTERM', () => process.exit(143));
 
 async function newPlayer(label) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  // Externe Ressourcen (Google Fonts) leer beantworten: Der Test bleibt offline-fähig
-  // und ein langsamer CDN-Abruf kann ihn nicht ausbremsen.
-  await context.route((url) => !url.href.startsWith(base), (route) =>
+  // Nur Google Fonts leer beantworten: Der Test bleibt offline-fähig und ein langsamer
+  // CDN-Abruf kann ihn nicht ausbremsen. Alles andere läuft ungefiltert, damit Fehler
+  // bei weiteren Ressourcen als console.error sichtbar bleiben.
+  const fontHosts = new Set(['fonts.googleapis.com', 'fonts.gstatic.com']);
+  await context.route((url) => fontHosts.has(url.hostname), (route) =>
     route.fulfill({ status: 200, contentType: 'text/css', body: '' })
   );
   await context.addInitScript({ content: `window.readCell = ${readCell.toString()};` });
