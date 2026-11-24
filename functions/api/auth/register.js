@@ -1,7 +1,7 @@
-import { SESSION_TTL_MS, apiError, hashPassword, json, randomToken, validName } from '../_lib/util.js';
+import { SESSION_TTL_MS, apiError, hashPassword, json, randomToken, readJson, validName } from '../_lib/util.js';
 
 export async function onRequestPost({ request, env }) {
-  const body = await request.json().catch(() => ({}));
+  const body = await readJson(request);
   const username = String(body.username || '').trim();
   const displayName = validName(body.displayName || username);
   const password = String(body.password || '');

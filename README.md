@@ -42,17 +42,18 @@ npm run dev
 
 Öffne <http://localhost:8788>. Die lokale D1-Datenbank wird automatisch angelegt.
 
-In einem zweiten Terminal, während der Dev-Server läuft:
+Tests:
 
 ```bash
-npm test
+npm test             # Regeln, Protokoll, Persistenz und API; startet einen eigenen Testserver
+npm run test:unit    # Nur Regel-, Protokoll- und Persistenztests, ohne Server
+npm run check:deploy # Worker-Bundle prüfen, ohne Deployment
 ```
 
-Das führt Regel-, Protokoll- und Persistenztests (Node.js 22.13+, nutzt `node:sqlite`) sowie den API-End-to-End-Test aus. Nur die Regeltests:
-
-```bash
-node tests/rules.test.mjs
-```
+Die Tests brauchen Node.js 22.13+ (`node:sqlite`), Bash und curl. Der API-Test startet einen
+Server auf Port `18788` mit einer temporären D1-Datenbank; die Entwicklungsdaten bleiben unberührt.
+Bei belegtem Port: `TEST_PORT=18789 npm run test:api`. Gegen einen schon laufenden Server:
+`BASE=http://localhost:8788 node tests/api.test.mjs`.
 
 ## Auf Cloudflare deployen
 

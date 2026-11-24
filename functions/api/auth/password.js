@@ -1,10 +1,10 @@
-import { apiError, bearerToken, getUser, hashPassword, json, randomToken } from '../_lib/util.js';
+import { apiError, bearerToken, getUser, hashPassword, json, randomToken, readJson } from '../_lib/util.js';
 
 export async function onRequestPost({ request, env }) {
   const user = await getUser(env, request);
   if (!user) return apiError('Nicht eingeloggt.', 401);
 
-  const body = await request.json().catch(() => ({}));
+  const body = await readJson(request);
   const oldPassword = String(body.oldPassword || '');
   const newPassword = String(body.newPassword || '');
   if (newPassword.length < 8) return apiError('Das neue Passwort braucht mindestens 8 Zeichen.');

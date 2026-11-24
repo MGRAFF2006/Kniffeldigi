@@ -1,13 +1,13 @@
 import { MODES } from '../_lib/rules.js';
 import { addPlayer, createGame, publicState, saveGame } from '../_lib/game.js';
-import { apiError, getUser, json, validName } from '../_lib/util.js';
+import { apiError, getUser, json, readJson, validName } from '../_lib/util.js';
 
 // POST /api/games – neues Spiel anlegen, Ersteller tritt sofort bei.
 // entry: 'manual' (analog spielen, Punkte digital führen – Standard) oder 'digital' (App würfelt).
 export async function onRequestPost({ request, env }) {
-  const body = await request.json().catch(() => ({}));
+  const body = await readJson(request);
   const mode = String(body.mode || '');
-  if (!MODES[mode]) return apiError('Unbekannter Spielmodus. Verfügbar: kniffel, yatzy');
+  if (!Object.hasOwn(MODES, mode)) return apiError('Unbekannter Spielmodus. Verfügbar: kniffel, yatzy');
   const entry = body.entry === 'digital' ? 'digital' : 'manual';
   // Papierblock-Modus: Host trägt für alle ein und kann Plätze hinzufügen (nur Analog, opt-in).
   const hostPaper = entry === 'manual' && body.hostPaper === true;

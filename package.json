@@ -8,7 +8,10 @@
     "dev": "wrangler dev --port 8788",
     "deploy": "wrangler deploy",
     "db:create": "wrangler d1 create wuerfelblock-db",
-    "test": "node tests/rules.test.mjs && node --test tests/log-snapshots.test.mjs && node tests/game.test.mjs && node tests/api.test.mjs"
+    "test": "npm run test:unit && npm run test:api",
+    "test:unit": "node tests/rules.test.mjs && node --test tests/log-snapshots.test.mjs && node tests/game.test.mjs",
+    "test:api": "bash tests/run-api.sh",
+    "check:deploy": "wrangler deploy --dry-run --outdir dist"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
