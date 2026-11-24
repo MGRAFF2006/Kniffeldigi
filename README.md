@@ -54,6 +54,12 @@ Das führt die Regeltests und den API-End-to-End-Test aus. Nur die Regeltests:
 node tests/rules.test.mjs
 ```
 
+Die Aufbewahrungsregeln werden ohne Dev-Server gegen SQLite geprüft (Node.js ≥ 22.13):
+
+```bash
+node --test tests/retention.test.mjs
+```
+
 ## Auf Cloudflare deployen
 
 1. Mit `npx wrangler login` anmelden und mit `npm run db:create` eine eigene D1-Datenbank erstellen.
@@ -66,6 +72,16 @@ Für automatische Deployments das Repository über die Git-Integration im Cloudf
 
 Die Handler unter `functions/api/` bleiben mit Pages Functions kompatibel. Bei einer Bereitstellung als Cloudflare Pages muss das D1-Binding `DB` in den Projekteinstellungen gesetzt werden; das Ausgabeverzeichnis ist `public`.
 
+## Datenaufbewahrung
+
+Ein Cron Trigger (`[triggers]` in `wrangler.toml`) räumt täglich um 03:17 UTC die D1-Datenbank auf:
+
+- Sitzungen, deren Ablaufzeit (`expires_at`) vorbei ist, werden gelöscht.
+- Nicht beendete Spiele (Status `lobby` oder `playing`), die seit mehr als 90 Tagen nicht mehr verändert wurden, werden gelöscht. Ihr Spielcode kann danach neu vergeben werden.
+- Beendete Spiele, Konten (`users`) und der Spielverlauf (`game_results`) bleiben erhalten.
+
+Pro Lauf werden höchstens 5000 Zeilen je Tabelle gelöscht; ein Rest folgt am nächsten Tag. Die Anzahl gelöschter Zeilen steht im Worker-Log. Regeln und Schwellenwerte: `functions/api/_lib/retention.js`. Bei einer Bereitstellung als Cloudflare Pages laufen keine Cron Trigger.
+
 ## Im Code
 
 | Pfad | Aufgabe |
@@ -75,7 +91,8 @@ Die Handler unter `functions/api/` bleiben mit Pages Functions kompatibel. Bei e
 | `functions/api/_lib/rules.js` | Re-Export der gemeinsamen Regeln für die API |
 | `functions/api/_lib/game.js` | Spielzustand, Züge und Persistenz |
 | `functions/api/_lib/schema.js` | D1-Schema und Bootstrap beim ersten Request |
-| `src/worker.js` | Worker-Einstiegspunkt und API-Routing |
+| `functions/api/_lib/retention.js` | Tägliche Bereinigung abgelaufener Sitzungen und aufgegebener Spiele |
+| `src/worker.js` | Worker-Einstiegspunkt, API-Routing und Cron-Handler |
 | `schema.sql` | D1-Schema |
 | `tests/` | Regeltests, API-Test und Screenshot-Skript |
 

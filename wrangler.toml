@@ -11,3 +11,7 @@ binding = "ASSETS"
 binding = "DB"
 database_name = "wuerfelblock-db"
 database_id = "22aa05f1-ff46-488e-862f-8772831dcc1f"
+
+# Tägliche Datenbereinigung (UTC), siehe functions/api/_lib/retention.js.
+[triggers]
+crons = ["17 3 * * *"]

@@ -13,6 +13,7 @@ import * as gameJoin from '../functions/api/games/[code]/join.js';
 import * as gameState from '../functions/api/games/[code]/state.js';
 import * as games from '../functions/api/games/index.js';
 import * as history from '../functions/api/history.js';
+import { runRetentionCleanup } from '../functions/api/_lib/retention.js';
 
 const routes = [
   ['POST', /^\/api\/auth\/register$/, register.onRequestPost],
@@ -47,5 +48,10 @@ export default {
     }
 
     return env.ASSETS.fetch(request);
+  },
+
+  // Täglicher Cron Trigger (wrangler.toml): abgelaufene Sitzungen und aufgegebene Spiele löschen.
+  async scheduled(controller, env) {
+    await runRetentionCleanup(env, controller.scheduledTime);
   },
 };
