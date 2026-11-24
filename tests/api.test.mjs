@@ -5,8 +5,14 @@ import assert from 'node:assert/strict';
 
 const BASE = process.env.BASE || 'http://localhost:8788';
 
+// Eigene IPv6-/64-Netze pro Testlauf, damit wiederholte Läufe gegen dieselbe
+// lokale Datenbank sich nicht über die Limits pro IP gegenseitig sperren
+// (wrangler dev setzt ohne Header 127.0.0.1 für alle Anfragen).
+const net = `2001:db8:${crypto.getRandomValues(new Uint16Array(1))[0].toString(16)}`;
+const ip = (n, host = 1) => `${net}:${n}::${host}`;
+
 async function call(method, path, { body, session, playerToken } = {}) {
-  const headers = {};
+  const headers = { 'CF-Connecting-IP': ip(0) };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (session) headers.Authorization = `Bearer ${session}`;
   if (playerToken) headers['X-Player-Token'] = playerToken;
@@ -40,10 +46,6 @@ res = await call('POST', '/auth/login', { body: { username: `tester_${stamp}`, p
 assert.equal(res.status, 401, 'Falsches Passwort abgelehnt');
 
 // --- Schutz gegen Passwort-Raten (Limits in functions/api/_lib/throttle.js) ---
-// Eigene IPv6-/64-Netze pro Testlauf, damit wiederholte Läufe gegen dieselbe
-// lokale Datenbank sich nicht gegenseitig sperren.
-const net = `2001:db8:${crypto.getRandomValues(new Uint16Array(1))[0].toString(16)}`;
-const ip = (n, host = 1) => `${net}:${n}::${host}`;
 
 async function authCall(path, body, { clientIp, session } = {}) {
   const headers = { 'Content-Type': 'application/json' };

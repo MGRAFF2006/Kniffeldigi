@@ -84,7 +84,7 @@ Ein erfolgreicher Login leert nur den Zähler für diesen Benutzernamen von dies
 
 Bleibendes Risiko: Wer von einer IP aus einen fremden Benutzernamen falsch eingibt, sperrt ihn nur für diese IP. Ein Angreifer mit vielen IPs kann einen Benutzernamen aber weiterhin für jeweils 15 Minuten sperren, solange er 100 Fehlversuche pro 15 Minuten aufrechterhält.
 
-Die IP kommt aus dem Header `CF-Connecting-IP`. Die Cloudflare-Edge setzt ihn bei jeder Anfrage an den Worker (auf `*.workers.dev` und eigenen Domains) und überschreibt dabei einen vom Client mitgeschickten Wert. Fehlt der Header oder ist er ungültig (nur außerhalb von Cloudflare, z. B. unter `wrangler dev`), entfallen die Limits pro IP; der strenge Login-Zähler gilt dann pro Benutzername allein, die Limits pro Konto gelten weiter. Die Werte stehen in `functions/api/_lib/throttle.js`.
+Die IP kommt aus dem Header `CF-Connecting-IP`. Die Cloudflare-Edge setzt ihn bei jeder Anfrage an den Worker (auf `*.workers.dev` und eigenen Domains) und überschreibt dabei einen vom Client mitgeschickten Wert. Fehlt der Header oder ist er ungültig (nur außerhalb der Cloudflare-Edge möglich; `wrangler dev` setzt ohne Header `127.0.0.1`), entfallen die Limits pro IP; der strenge Login-Zähler gilt dann pro Benutzername allein, die Limits pro Konto gelten weiter. Die Werte stehen in `functions/api/_lib/throttle.js`.
 
 ## Im Code
 

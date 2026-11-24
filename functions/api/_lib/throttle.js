@@ -34,8 +34,9 @@ export const TOO_MANY_MESSAGE = 'Zu viele Versuche. Bitte später erneut versuch
  * Client-IP für die Pro-IP-Limits. Auf Cloudflare setzt die Edge
  * CF-Connecting-IP bei jeder Anfrage von außen und überschreibt dabei einen vom
  * Client mitgeschickten Wert. Fehlt der Header oder ist er keine gültige IP
- * (nur außerhalb von Cloudflare möglich, z. B. unter `wrangler dev`), entfallen
- * die IP-Limits, statt alle Clients in einen gemeinsamen Bucket zu sperren.
+ * (nur außerhalb der Cloudflare-Edge möglich; `wrangler dev` setzt ohne Header
+ * 127.0.0.1), entfallen die IP-Limits, statt alle Clients in einen gemeinsamen
+ * Bucket zu sperren.
  */
 export function clientIp(request) {
   return normalizeIp(request.headers.get('CF-Connecting-IP'));
