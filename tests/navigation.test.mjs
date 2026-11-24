@@ -370,7 +370,7 @@ test('late password and profile saves do not reset new forms or display stale no
   assert.deepEqual(f.notices, []);
 });
 
-test('late login keeps its session without redirecting; it cannot replace another session', async () => {
+test('late login keeps its session without redirecting; it cannot replace a newer sign-in', async () => {
   const f = fixture();
   f.navigate('#/login');
   const lateLogin = f.click('login-form', 'submit');
@@ -387,11 +387,16 @@ test('late login keeps its session without redirecting; it cannot replace anothe
   f.navigate('#/login');
   const oldLogin = f.click('login-form', 'submit');
   const oldResponse = f.take();
-  f.probe.setSession('other-tab', { displayName: 'Other' });
+  f.navigate('#/register');
+  const newerRegistration = f.click('reg-form', 'submit');
+  f.take().resolve({ token: 'newer-session', user: { displayName: 'Newer' } });
+  await newerRegistration;
   oldResponse.resolve({ token: 'old-session', user: { displayName: 'Old' } });
   await oldLogin;
-  assert.equal(f.probe.getSession(), 'other-tab');
+  assert.equal(f.probe.getSession(), 'newer-session');
+  assert.equal(f.probe.getStoredUser().displayName, 'Newer');
   f.probe.setSession(null);
+  f.notices.length = 0;
   f.navigate('#/login');
   const login = f.click('login-form', 'submit');
   f.take().resolve({ token: 'session', user: { displayName: 'Fixture' } });
@@ -399,6 +404,46 @@ test('late login keeps its session without redirecting; it cannot replace anothe
   assert.equal(f.probe.getSession(), 'session');
   assert.equal(f.location.hash, '#/');
   assert.equal(f.notices.length, 1);
+});
+
+test('an earlier logout completing late does not discard a newer login or registration', async () => {
+  for (const [hash, form] of [['#/login', 'login-form'], ['#/register', 'reg-form']]) {
+    const f = fixture();
+    f.probe.setSession('session-a', { username: 'a', displayName: 'A' });
+    f.probe.renderNav();
+    const logout = f.click('nav-logout');
+    const logoutResponse = f.take();
+    f.navigate(hash);
+    const signIn = f.click(form, 'submit');
+    const signInResponse = f.take();
+    logoutResponse.resolve({ success: true });
+    await logout;
+    assert.equal(f.probe.getSession(), null);
+    signInResponse.resolve({ token: 'session-b', user: { username: 'b', displayName: 'B' } }, 201);
+    await signIn;
+    assert.equal(f.probe.getSession(), 'session-b');
+    assert.equal(f.location.hash, '#/');
+    assert.equal(f.notices.length, 1);
+  }
+});
+
+test('an older profile save cannot replace a newer saved name', async () => {
+  const f = fixture();
+  f.probe.setSession('session', { username: 'fixture', displayName: 'Original' });
+  f.navigate('#/settings');
+  f.take().resolve({ games: [], stats: [] });
+  await f.flush();
+  const older = f.click('profile-form', 'submit');
+  const olderResponse = f.take();
+  f.navigate('#/settings');
+  f.take().resolve({ games: [], stats: [] });
+  await f.flush();
+  const newer = f.click('profile-form', 'submit');
+  f.take().resolve({ user: { username: 'fixture', displayName: 'Newer' } });
+  await newer;
+  olderResponse.resolve({ user: { username: 'fixture', displayName: 'Older' } });
+  await older;
+  assert.equal(f.probe.getStoredUser().displayName, 'Newer');
 });
 
 test('logout clears only its session and preserves a newer route without stale notices', async () => {
