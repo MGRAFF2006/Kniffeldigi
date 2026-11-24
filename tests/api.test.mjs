@@ -164,6 +164,8 @@ for (const [method, path] of [
   for (const rawBody of ['null', '[]', '42', '"text"', '{']) {
     const invalid = await call(method, path, { rawBody, session, playerToken: mHost });
     assert.equal(invalid.status, 400, `${method} ${path}: ${rawBody} wird abgelehnt`);
+    assert.equal(invalid.data.error, 'Der Request muss ein gültiges JSON-Objekt enthalten.',
+      `${method} ${path}: ${rawBody} scheitert an der Body-Prüfung`);
     assert.equal(invalid.cacheControl, 'no-store', 'Fehler wird nicht gecacht');
   }
 }
