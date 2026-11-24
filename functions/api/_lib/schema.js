@@ -36,5 +36,6 @@ CREATE TABLE IF NOT EXISTS game_results (
   finished_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_results_user ON game_results (user_id, finished_at DESC);
+CREATE INDEX IF NOT EXISTS idx_results_game ON game_results (game_code);
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions (expires_at);
 `;
