@@ -16,7 +16,7 @@ concurrency:
 jobs:
   test:
     runs-on: boat-small
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v6
@@ -52,7 +52,7 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - name: Install Playwright Chromium
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: npx playwright install --with-deps --only-shell chromium
       - name: Test browser journey
         # Der Test startet und beendet seinen eigenen wrangler-dev-Server.
