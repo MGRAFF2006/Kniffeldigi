@@ -406,6 +406,25 @@ test('late login keeps its session without redirecting; it cannot replace a newe
   assert.equal(f.notices.length, 1);
 });
 
+test('overlapping sign-ins keep the newest submission in either response order', async () => {
+  for (const newerFirst of [false, true]) {
+    const f = fixture();
+    f.navigate('#/login');
+    const login = f.click('login-form', 'submit');
+    const loginResponse = f.take();
+    f.navigate('#/register');
+    const registration = f.click('reg-form', 'submit');
+    const registrationResponse = f.take();
+    const older = () => loginResponse.resolve({ token: 'session-a', user: { displayName: 'A' } });
+    const newer = () => registrationResponse.resolve({ token: 'session-b', user: { displayName: 'B' } }, 201);
+    if (newerFirst) { newer(); await registration; older(); await login; }
+    else { older(); await login; newer(); await registration; }
+    assert.equal(f.probe.getSession(), 'session-b');
+    assert.equal(f.location.hash, '#/');
+    assert.equal(f.notices.length, 1);
+  }
+});
+
 test('an earlier logout completing late does not discard a newer login or registration', async () => {
   for (const [hash, form] of [['#/login', 'login-form'], ['#/register', 'reg-form']]) {
     const f = fixture();

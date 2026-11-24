@@ -886,15 +886,16 @@ function openEntryModal(state, cat, current = null, forPlayer = null) {
 
 // ===== Auth =====
 
-// Zählt neu eingerichtete Sitzungen (Anmeldung hier oder in einem anderen Tab). Ein Abmelden
+// Anmeldungen/Registrierungen in Absende-Reihenfolge: eine Antwort gilt nur, wenn keine später
+// abgeschickte (oder in einem anderen Tab erfolgte) Anmeldung schon übernommen wurde. Ein Abmelden
 // der vorherigen Sitzung zählt nicht – es darf eine danach abgeschickte Anmeldung nicht verwerfen.
-let sessionInstalls = 0;
+let signInSubmissions = 0;
+let appliedSignIn = 0;
 
-// Eine erfolgreiche Anmeldung gilt, solange seit dem Absenden keine andere Anmeldung sie
-// ersetzt hat; Weiterleitung und Hinweis entfallen, wenn der Nutzer schon woanders ist.
-function signedIn(navigation, installsAtSubmit, data) {
-  if (installsAtSubmit !== sessionInstalls) return false;
-  sessionInstalls++;
+// Weiterleitung und Hinweis entfallen, wenn der Nutzer schon woanders ist.
+function signedIn(navigation, attempt, data) {
+  if (attempt <= appliedSignIn) return false;
+  appliedSignIn = attempt;
   const current = isCurrentView(navigation);
   setSession(data.token, data.user);
   if (!current) {
@@ -925,10 +926,10 @@ function viewLogin() {
     e.preventDefault();
     const errEl = document.getElementById('lg-error');
     errEl.textContent = '';
-    const installs = sessionInstalls;
+    const attempt = ++signInSubmissions;
     try {
       const data = await api.login(document.getElementById('lg-user').value.trim(), document.getElementById('lg-pass').value);
-      if (!signedIn(navigation, installs, data)) return;
+      if (!signedIn(navigation, attempt, data)) return;
       toast(`Hallo, ${data.user.displayName}!`);
       location.hash = '#/';
     } catch (err) {
@@ -961,10 +962,10 @@ function viewRegister() {
     errEl.textContent = '';
     const username = document.getElementById('rg-user').value.trim();
     const display = document.getElementById('rg-display').value.trim() || username;
-    const installs = sessionInstalls;
+    const attempt = ++signInSubmissions;
     try {
       const data = await api.register(username, display, document.getElementById('rg-pass').value);
-      if (!signedIn(navigation, installs, data)) return;
+      if (!signedIn(navigation, attempt, data)) return;
       toast(`Willkommen, ${data.user.displayName}! Dein Konto ist bereit.`);
       location.hash = '#/';
     } catch (err) {
@@ -1181,6 +1182,7 @@ validateSession();
 window.addEventListener('hashchange', route);
 // An- oder Abmeldung in einem anderen Tab: Kontoanzeige hier nachziehen.
 window.addEventListener('storage', (e) => {
-  if (e.key === 'wb_session' && e.newValue) sessionInstalls++;
+  // Eine Anmeldung in einem anderen Tab ersetzt alle hier noch ausstehenden.
+  if (e.key === 'wb_session' && e.newValue) appliedSignIn = signInSubmissions;
   if (e.key === null || e.key === 'wb_session') sessionChanged();
 });
