@@ -1,4 +1,4 @@
-import { apiError, getUser, json, validName } from '../_lib/util.js';
+import { apiError, getUser, json, readJson, validName } from '../_lib/util.js';
 
 export async function onRequestGet({ request, env }) {
   const user = await getUser(env, request);
@@ -11,7 +11,7 @@ export async function onRequestPatch({ request, env }) {
   const user = await getUser(env, request);
   if (!user) return apiError('Nicht eingeloggt.', 401);
 
-  const body = await request.json().catch(() => ({}));
+  const body = await readJson(request);
   const displayName = validName(body.displayName);
   if (!displayName) return apiError('Anzeigename: 2–20 Zeichen.');
 

@@ -17,7 +17,10 @@ export async function onRequest(context) {
       await env.DB.batch(stmts.map((s) => env.DB.prepare(s)));
       schemaReady = true;
     }
-    return await next();
+    const response = await next();
+    // API-Antworten sind Live-Zustand und dürfen nicht zwischengespeichert werden.
+    response.headers.set('Cache-Control', 'no-store');
+    return response;
   } catch (err) {
     if (err instanceof RequestError) return apiError(err.message, err.status);
     console.error('API-Fehler:', err);

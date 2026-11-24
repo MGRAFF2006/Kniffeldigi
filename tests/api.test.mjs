@@ -1,27 +1,37 @@
-// End-to-End-Test gegen einen lokal laufenden Dev-Server (npm run dev).
-// Ausführen: node tests/api.test.mjs   (BASE-URL via env BASE überschreibbar)
+// End-to-End-Test gegen einen Dev-Server.
+// Ausführen: npm run test:api (startet eigenen Server) oder BASE=… node tests/api.test.mjs
 
 import assert from 'node:assert/strict';
 
 const BASE = process.env.BASE || 'http://localhost:8788';
 
-async function call(method, path, { body, session, playerToken } = {}) {
+async function call(method, path, { body, rawBody, session, playerToken } = {}) {
   const headers = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (session) headers.Authorization = `Bearer ${session}`;
   if (playerToken) headers['X-Player-Token'] = playerToken;
-  const res = await fetch(`${BASE}/api${path}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  const res = await fetch(`${BASE}/api${path}`, {
+    method, headers, body: rawBody ?? (body !== undefined ? JSON.stringify(body) : undefined),
+    signal: AbortSignal.timeout(10000),
+  });
   const data = res.status === 204 ? null : await res.json();
-  return { status: res.status, data };
+  return { status: res.status, data, cacheControl: res.headers.get('Cache-Control') };
 }
 
 // Server erreichbar?
 try {
-  await fetch(BASE, { signal: AbortSignal.timeout(3000) });
+  const res = await fetch(BASE, { signal: AbortSignal.timeout(3000) });
+  assert.equal(res.status, 200, 'Dev-Server liefert Startseite');
 } catch {
-  console.log(`⚠ api.test übersprungen: kein Dev-Server unter ${BASE} (mit "npm run dev" starten).`);
-  process.exit(0);
+  console.error(`api.test: kein funktionierender Dev-Server unter ${BASE}. Mit "npm run test:api" starten.`);
+  process.exit(1);
 }
+
+for (const mode of ['constructor', '__proto__', 'toString']) {
+  const res = await call('POST', '/games', { body: { mode, name: 'Testerin' } });
+  assert.equal(res.status, 400, `Ungültiger Spielmodus ${mode} wird abgelehnt`);
+}
+assert.equal((await call('GET', '/games/%ZZ/state')).status, 400, 'Ungültiges URL-Encoding ist kein Serverfehler');
 
 const stamp = Date.now().toString(36);
 
@@ -101,6 +111,7 @@ res = await call('GET', `/games/${code}/state`);
 const version = res.data.version;
 res = await call('GET', `/games/${code}/state?since=${version}`);
 assert.equal(res.status, 204, 'Polling liefert 204 ohne Änderung');
+assert.equal(res.cacheControl, 'no-store', 'Polling wird nicht gecacht');
 
 // --- Komplettes Spiel zu Ende spielen (beide Spieler, alle Felder) ---
 const cats = res2catList();
@@ -144,6 +155,20 @@ const mCode = res.data.code;
 const mHost = res.data.playerToken;
 assert.equal(res.data.state.entry, 'manual', 'Standard ist Analogmodus');
 assert.equal(res.data.state.status, 'playing', 'Analogspiel läuft sofort');
+
+for (const [method, path] of [
+  ['POST', '/auth/register'], ['POST', '/auth/login'], ['POST', '/auth/password'],
+  ['PATCH', '/auth/me'], ['POST', '/games'],
+  ['POST', `/games/${mCode}/join`], ['POST', `/games/${mCode}/action`],
+]) {
+  for (const rawBody of ['null', '[]', '42', '"text"', '{']) {
+    const invalid = await call(method, path, { rawBody, session, playerToken: mHost });
+    assert.equal(invalid.status, 400, `${method} ${path}: ${rawBody} wird abgelehnt`);
+    assert.equal(invalid.data.error, 'Der Request muss ein gültiges JSON-Objekt enthalten.',
+      `${method} ${path}: ${rawBody} scheitert an der Body-Prüfung`);
+    assert.equal(invalid.cacheControl, 'no-store', 'Fehler wird nicht gecacht');
+  }
+}
 
 // Beitritt jederzeit möglich (kein Lobby-Zwang).
 res = await call('POST', `/games/${mCode}/join`, { body: { name: 'Peter' } });
@@ -320,5 +345,8 @@ res = await call('POST', '/auth/password', { body: { oldPassword: 'geheim123', n
 assert.equal(res.status, 200, 'Passwort geändert');
 res = await call('POST', '/auth/login', { body: { username: `tester_${stamp}`, password: 'nochGeheimer1' } });
 assert.equal(res.status, 200, 'Login mit neuem Passwort');
+const secondSession = res.data.token;
+await call('POST', '/auth/logout', { session: secondSession });
+assert.equal((await call('GET', '/auth/me', { session: secondSession })).status, 401, 'Logout entwertet Sitzung');
 
 console.log('✔ api.test: kompletter Spiel- und Kontozyklus erfolgreich durchgespielt.');

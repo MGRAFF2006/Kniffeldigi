@@ -3,6 +3,7 @@
 // werden auf dieselben Handler wie bei Cloudflare Pages Functions gemappt.
 
 import { onRequest as middleware } from '../functions/api/_middleware.js';
+import { apiError } from '../functions/api/_lib/util.js';
 import * as login from '../functions/api/auth/login.js';
 import * as logout from '../functions/api/auth/logout.js';
 import * as me from '../functions/api/auth/me.js';
@@ -37,13 +38,15 @@ export default {
         if (request.method !== method) continue;
         const match = url.pathname.match(pattern);
         if (!match) continue;
-        const params = paramName ? { [paramName]: decodeURIComponent(match[1]) } : {};
+        let params;
+        try {
+          params = paramName ? { [paramName]: decodeURIComponent(match[1]) } : {};
+        } catch {
+          return apiError('Ungültiger Spielcode.');
+        }
         return middleware({ request, env, params, next: () => handler({ request, env, params }) });
       }
-      return new Response(JSON.stringify({ error: 'Nicht gefunden.' }), {
-        status: 404,
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      });
+      return apiError('Nicht gefunden.', 404);
     }
 
     return env.ASSETS.fetch(request);

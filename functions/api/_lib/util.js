@@ -3,7 +3,7 @@
 export function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8', ...headers },
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers },
   });
 }
 
@@ -17,6 +17,15 @@ export class RequestError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+/** Liest den Request-Body; nur ein JSON-Objekt ist gültig, sonst 400. */
+export async function readJson(request) {
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new RequestError('Der Request muss ein gültiges JSON-Objekt enthalten.');
+  }
+  return body;
 }
 
 export function randomToken(bytes = 24) {
