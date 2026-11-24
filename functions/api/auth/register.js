@@ -1,4 +1,5 @@
 import { SESSION_TTL_MS, apiError, hashPassword, json, randomToken, validName } from '../_lib/util.js';
+import { clientIp, reserveAttempt, rule, tooManyAttempts } from '../_lib/throttle.js';
 
 export async function onRequestPost({ request, env }) {
   const body = await request.json().catch(() => ({}));
@@ -11,6 +12,14 @@ export async function onRequestPost({ request, env }) {
   }
   if (!displayName) return apiError('Anzeigename: 2–20 Zeichen.');
   if (password.length < 8) return apiError('Das Passwort braucht mindestens 8 Zeichen.');
+
+  // Registrierungen pro IP begrenzen; zählt auch "Benutzername vergeben",
+  // damit sich Benutzernamen nicht massenhaft abfragen lassen.
+  const ip = clientIp(request);
+  if (ip) {
+    const attempt = await reserveAttempt(env, [rule('registerIp', ip)]);
+    if (attempt.retryAfter) return tooManyAttempts(attempt.retryAfter);
+  }
 
   const existing = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(username).first();
   if (existing) return apiError('Dieser Benutzername ist schon vergeben.', 409);

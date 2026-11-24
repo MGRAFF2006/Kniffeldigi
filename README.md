@@ -66,6 +66,19 @@ Für automatische Deployments das Repository über die Git-Integration im Cloudf
 
 Die Handler unter `functions/api/` bleiben mit Pages Functions kompatibel. Bei einer Bereitstellung als Cloudflare Pages muss das D1-Binding `DB` in den Projekteinstellungen gesetzt werden; das Ausgabeverzeichnis ist `public`.
 
+## Schutz vor Passwort-Raten
+
+Die API zählt Anmelde- und Registrierungsversuche in der D1-Tabelle `auth_attempts` (gleitendes Zeitfenster, alte Einträge werden automatisch gelöscht). Ist ein Limit erreicht, antwortet sie mit `429` und `Retry-After`:
+
+| Aktion | Limit |
+| :--- | :--- |
+| Login, Fehlversuche pro Benutzername | 10 in 15 Minuten |
+| Login, Fehlversuche pro IP (IPv6: pro /64-Netz) | 50 in 15 Minuten |
+| Passwort ändern, falsches aktuelles Passwort pro Konto | 10 in 15 Minuten |
+| Registrierungsversuche pro IP | 20 pro Stunde |
+
+Ein erfolgreicher Login setzt den Zähler des Kontos zurück. Die IP kommt aus `CF-Connecting-IP`; fehlt der Header, gelten nur die Limits pro Konto. Die Werte stehen in `functions/api/_lib/throttle.js`.
+
 ## Im Code
 
 | Pfad | Aufgabe |
@@ -75,6 +88,7 @@ Die Handler unter `functions/api/` bleiben mit Pages Functions kompatibel. Bei e
 | `functions/api/_lib/rules.js` | Re-Export der gemeinsamen Regeln für die API |
 | `functions/api/_lib/game.js` | Spielzustand, Züge und Persistenz |
 | `functions/api/_lib/schema.js` | D1-Schema und Bootstrap beim ersten Request |
+| `functions/api/_lib/throttle.js` | Versuchslimits für Login, Passwortänderung und Registrierung |
 | `src/worker.js` | Worker-Einstiegspunkt und API-Routing |
 | `schema.sql` | D1-Schema |
 | `tests/` | Regeltests, API-Test und Screenshot-Skript |

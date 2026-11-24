@@ -1,4 +1,5 @@
 import { apiError, bearerToken, getUser, hashPassword, json, randomToken } from '../_lib/util.js';
+import { releaseAttempts, reserveAttempt, rule, tooManyAttempts } from '../_lib/throttle.js';
 
 export async function onRequestPost({ request, env }) {
   const user = await getUser(env, request);
@@ -9,9 +10,16 @@ export async function onRequestPost({ request, env }) {
   const newPassword = String(body.newPassword || '');
   if (newPassword.length < 8) return apiError('Das neue Passwort braucht mindestens 8 Zeichen.');
 
+  // Fehlversuche beim aktuellen Passwort begrenzen (z. B. bei einer gekaperten Sitzung).
+  const userRule = rule('passwordUser', user.id);
+  const attempt = await reserveAttempt(env, [userRule]);
+  if (attempt.retryAfter) return tooManyAttempts(attempt.retryAfter);
+
   const row = await env.DB.prepare('SELECT pass_hash, salt FROM users WHERE id = ?').bind(user.id).first();
   const oldHash = await hashPassword(oldPassword, row.salt);
   if (oldHash !== row.pass_hash) return apiError('Das aktuelle Passwort ist falsch.', 401);
+
+  await releaseAttempts(env, attempt.ids, [userRule.bucket]);
 
   const salt = randomToken(16);
   const passHash = await hashPassword(newPassword, salt);

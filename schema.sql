@@ -42,3 +42,12 @@ CREATE TABLE IF NOT EXISTS game_results (
 
 CREATE INDEX IF NOT EXISTS idx_results_user ON game_results (user_id, finished_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions (expires_at);
+
+CREATE TABLE IF NOT EXISTS auth_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bucket TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_attempts_bucket ON auth_attempts (bucket, created_at);
+CREATE INDEX IF NOT EXISTS idx_auth_attempts_created ON auth_attempts (created_at);

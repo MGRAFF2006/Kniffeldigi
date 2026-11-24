@@ -39,6 +39,93 @@ assert.equal(res.data.user.displayName, 'Testerin', 'me liefert Profil');
 res = await call('POST', '/auth/login', { body: { username: `tester_${stamp}`, password: 'falsch123' } });
 assert.equal(res.status, 401, 'Falsches Passwort abgelehnt');
 
+// --- Schutz gegen Passwort-Raten (Limits in functions/api/_lib/throttle.js) ---
+// Eigene IPv6-/64-Netze pro Testlauf, damit wiederholte Läufe gegen dieselbe
+// lokale Datenbank sich nicht gegenseitig sperren.
+const net = `2001:db8:${crypto.getRandomValues(new Uint16Array(1))[0].toString(16)}`;
+const ip = (n, host = 1) => `${net}:${n}::${host}`;
+
+async function authCall(path, body, { clientIp, session } = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (clientIp) headers['CF-Connecting-IP'] = clientIp;
+  if (session) headers.Authorization = `Bearer ${session}`;
+  const r = await fetch(`${BASE}/api${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+  return { status: r.status, data: await r.json(), retryAfter: r.headers.get('Retry-After') };
+}
+
+function assertThrottled(r, label) {
+  assert.equal(r.status, 429, `${label}: ${JSON.stringify(r.data)}`);
+  assert.equal(r.data.error, 'Zu viele Versuche. Bitte später erneut versuchen.', `${label}: deutsche Meldung`);
+  const seconds = Number(r.retryAfter);
+  assert.ok(Number.isInteger(seconds) && seconds >= 1 && seconds <= 3600, `${label}: Retry-After (${r.retryAfter})`);
+}
+
+const victim = `rl_${stamp}`;
+res = await authCall('/auth/register', { username: victim, password: 'richtig123' }, { clientIp: ip(1) });
+assert.equal(res.status, 201, `Registrierung Opfer: ${JSON.stringify(res.data)}`);
+const victimSession = res.data.token;
+
+// 10 Fehlversuche pro Benutzername sind erlaubt, danach ist auch das richtige
+// Passwort gesperrt – egal von welcher IP.
+for (let i = 1; i <= 10; i++) {
+  res = await authCall('/auth/login', { username: victim, password: `falsch${i}` }, { clientIp: ip(1) });
+  assert.equal(res.status, 401, `Fehlversuch ${i} noch normal abgelehnt`);
+}
+assertThrottled(await authCall('/auth/login', { username: victim, password: 'richtig123' }, { clientIp: ip(1) }), 'Login nach 10 Fehlversuchen');
+assertThrottled(await authCall('/auth/login', { username: victim.toUpperCase(), password: 'richtig123' }, { clientIp: ip(2) }), 'Sperre gilt pro Konto, unabhängig von IP und Schreibweise');
+
+// Andere Konten von derselben IP sind nicht betroffen.
+res = await authCall('/auth/login', { username: `tester_${stamp}`, password: 'geheim123' }, { clientIp: ip(1) });
+assert.equal(res.status, 200, 'Anderer Benutzername trotz Sperre einloggbar');
+
+// Unbekannte Benutzernamen verhalten sich gleich (keine Kontenerkennung).
+for (let i = 1; i <= 10; i++) {
+  res = await authCall('/auth/login', { username: `ghost_${stamp}`, password: 'egal1234' }, { clientIp: ip(3) });
+  assert.equal(res.status, 401, 'Unbekannter Benutzer: normale Ablehnung');
+  assert.equal(res.data.error, 'Benutzername oder Passwort ist falsch.', 'Unbekannter Benutzer: gleiche Meldung');
+}
+assertThrottled(await authCall('/auth/login', { username: `ghost_${stamp}`, password: 'egal1234' }, { clientIp: ip(3) }), 'Unbekannter Benutzer ebenfalls gesperrt');
+
+// Ein erfolgreicher Login setzt den Zähler des Kontos zurück.
+const typo = `typo_${stamp}`;
+res = await authCall('/auth/register', { username: typo, password: 'richtig123' }, { clientIp: ip(4) });
+assert.equal(res.status, 201);
+for (let i = 1; i <= 9; i++) await authCall('/auth/login', { username: typo, password: 'vertippt' }, { clientIp: ip(4) });
+res = await authCall('/auth/login', { username: typo, password: 'richtig123' }, { clientIp: ip(4) });
+assert.equal(res.status, 200, 'Login nach 9 Fehlversuchen noch möglich');
+res = await authCall('/auth/login', { username: typo, password: 'vertippt' }, { clientIp: ip(4) });
+assert.equal(res.status, 401, 'Zähler nach erfolgreichem Login zurückgesetzt');
+
+// Pro IP (IPv6: /64-Netz) sind 50 Fehlversuche über beliebige Namen erlaubt.
+for (let i = 1; i <= 50; i++) {
+  res = await authCall('/auth/login', { username: `spray_${stamp}_${i}`, password: 'egal1234' }, { clientIp: ip(5, i) });
+  assert.equal(res.status, 401, `IP-Fehlversuch ${i} noch normal abgelehnt`);
+}
+assertThrottled(await authCall('/auth/login', { username: `tester_${stamp}`, password: 'geheim123' }, { clientIp: ip(5, 99) }), 'Login aus gesperrtem /64-Netz');
+res = await authCall('/auth/login', { username: `tester_${stamp}`, password: 'geheim123' }, { clientIp: ip(6) });
+assert.equal(res.status, 200, 'Andere IP nicht betroffen');
+
+// Passwort ändern: 10 falsche aktuelle Passwörter pro Konto.
+for (let i = 1; i <= 10; i++) {
+  res = await authCall('/auth/password', { oldPassword: `falsch${i}`, newPassword: 'neuesPasswort1' }, { session: victimSession, clientIp: ip(1) });
+  assert.equal(res.status, 401, `Passwort-Fehlversuch ${i} noch normal abgelehnt`);
+}
+assertThrottled(
+  await authCall('/auth/password', { oldPassword: 'richtig123', newPassword: 'neuesPasswort1' }, { session: victimSession, clientIp: ip(1) }),
+  'Passwortänderung nach 10 Fehlversuchen'
+);
+
+// Registrierung: 20 Versuche pro IP und Stunde, auch "Benutzername vergeben" zählt.
+res = await authCall('/auth/register', { username: `reg_${stamp}`, password: 'geheim123' }, { clientIp: ip(7) });
+assert.equal(res.status, 201);
+for (let i = 2; i <= 20; i++) {
+  res = await authCall('/auth/register', { username: `reg_${stamp}`, password: 'geheim123' }, { clientIp: ip(7) });
+  assert.equal(res.status, 409, `Registrierungsversuch ${i} noch normal beantwortet`);
+}
+assertThrottled(await authCall('/auth/register', { username: `reg2_${stamp}`, password: 'geheim123' }, { clientIp: ip(7) }), 'Registrierung nach 20 Versuchen');
+res = await authCall('/auth/register', { username: `reg2_${stamp}`, password: 'geheim123' }, { clientIp: ip(8) });
+assert.equal(res.status, 201, 'Registrierung von anderer IP möglich');
+
 // --- Digitales Spiel anlegen (eingeloggt) + zweiter Spieler (anonym) ---
 res = await call('POST', '/games', { body: { mode: 'yatzy', entry: 'digital' }, session });
 assert.equal(res.status, 201, `Spiel anlegen: ${JSON.stringify(res.data)}`);
