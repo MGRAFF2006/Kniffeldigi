@@ -9,7 +9,9 @@ const apiSource = readFileSync(new URL('../public/js/api.js', import.meta.url), 
 const appSource = readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8').replace(/^import .*;\n/gm, '');
 
 // Tabs of one browser share localStorage; pass the same storage to model a second tab.
-function fixture({ storage = new Map() } = {}) {
+// `onWrite(key)` runs after each write, e.g. to deliver another tab's storage event in between writes.
+// `storageFull` makes every write throw like a browser whose storage quota is exhausted.
+function fixture({ storage = new Map(), onWrite, storageFull = false } = {}) {
   const elements = new Map();
   class Element {
     value = '';
@@ -54,8 +56,12 @@ function fixture({ storage = new Map() } = {}) {
     },
     localStorage: {
       getItem: key => storage.get(key) ?? null,
-      setItem: (key, value) => storage.set(key, value),
-      removeItem: key => storage.delete(key),
+      setItem: (key, value) => {
+        if (storageFull) throw Object.assign(new Error('The quota has been exceeded.'), { name: 'QuotaExceededError' });
+        storage.set(key, value);
+        onWrite?.(key);
+      },
+      removeItem: key => { storage.delete(key); onWrite?.(key); },
     },
     fetch: (url, options) => new Promise((resolve, reject) => pending.push({
       url, options,
@@ -670,9 +676,10 @@ test('a game keeps acting with its own seat when another tab joins the same game
   assert.equal(tabA.take().options.headers['X-Player-Token'], 'seat-a');
 });
 
-test('an older sign-in cannot replace a newer one from another tab before its storage event arrives', async () => {
-  // Tab 1 submits A, then tab 2 submits and installs B; A arrives in tab 1 before B's storage event.
-  {
+test('across tabs the last sign-in response wins, and every successful sign-in completes', async () => {
+  // Two tabs sign in concurrently, in either response order. Each tab's own sign-in redirects and greets;
+  // the browser keeps the response that arrived last, and the other tab's account display follows it.
+  for (const tab1First of [true, false]) {
     const storage = new Map();
     const tab1 = fixture({ storage });
     const tab2 = fixture({ storage });
@@ -681,15 +688,21 @@ test('an older sign-in cannot replace a newer one from another tab before its st
     const loginA = tab1.click('login-form', 'submit');
     const responseA = tab1.take();
     const loginB = tab2.click('login-form', 'submit');
-    tab2.take().resolve({ token: 'session-b', user: { username: 'b', displayName: 'B' } });
-    await loginB;
-    responseA.resolve({ token: 'session-a', user: { username: 'a', displayName: 'A' } });
-    await loginA;
-    assert.equal(tab1.probe.getSession(), 'session-b');
-    assert.equal(tab1.location.hash, '#/login');
-    assert.deepEqual(tab1.notices, []);
-    tab1.storageEvent('wb_session');
-    assert.match(tab1.elements.get('topnav').innerHTML, />B</);
+    const responseB = tab2.take();
+    const a = async () => { responseA.resolve({ token: 'session-a', user: { username: 'a', displayName: 'A' } }); await loginA; };
+    const b = async () => { responseB.resolve({ token: 'session-b', user: { username: 'b', displayName: 'B' } }); await loginB; };
+    if (tab1First) { await a(); await b(); } else { await b(); await a(); }
+    for (const [tab, name] of [[tab1, 'A'], [tab2, 'B']]) {
+      assert.equal(tab.location.hash, '#/');
+      assert.deepEqual(tab.notices.map(([message]) => message), [`Hallo, ${name}!`]);
+      assert.equal(tab.elements.get('lg-error')?.textContent ?? '', '');
+    }
+    const last = tab1First ? 'B' : 'A';
+    assert.equal(storage.has('wb_auth'), true);
+    assert.equal(tab1.probe.getSession(), `session-${last.toLowerCase()}`);
+    const other = tab1First ? tab1 : tab2;
+    other.storageEvent('wb_auth');
+    assert.match(other.elements.get('topnav').innerHTML, new RegExp(`>${last}<`));
   }
 });
 
@@ -706,7 +719,7 @@ test('a late storage event for another tab\'s earlier sign-in does not discard a
     tab1.navigate('#/login');
     const loginC = tab1.click('login-form', 'submit');
     const responseC = tab1.take();
-    tab1.storageEvent('wb_session');
+    tab1.storageEvent('wb_auth');
     responseC.resolve({ token: 'session-c', user: { username: 'c', displayName: 'C' } });
     await loginC;
     assert.equal(tab1.probe.getSession(), 'session-c');
@@ -833,4 +846,73 @@ test('an expired session found after leaving settings still signs out', async ()
   assert.equal(f.probe.getSession(), null);
   assert.equal(f.elements.has('nav-logout'), false);
   assert.equal(f.elements.get('lg-user'), typed, 'the login form is not rebuilt');
+});
+
+test('another tab never sees one account\'s name with the other account\'s token', async () => {
+  // Tab 2 switches from A to B; tab 1 handles a storage event after every single write.
+  // Whatever tab 1 shows at any point, its logout sends the token of the account it shows.
+  const storage = new Map();
+  const tab1 = fixture({ storage });
+  tab1.probe.setSession('session-a', { username: 'a', displayName: 'A' });
+  tab1.probe.renderNav();
+  const seen = [];
+  const tab2 = fixture({
+    storage,
+    onWrite: key => {
+      tab1.storageEvent(key);
+      const shown = tab1.elements.get('topnav').innerHTML.match(/userchip">([^<]+)</)?.[1];
+      if (!shown) return;
+      tab1.click('nav-logout');
+      const logout = tab1.pending.pop();
+      seen.push(shown);
+      assert.equal(logout.options.headers.Authorization, `Bearer session-${shown.toLowerCase()}`);
+    },
+  });
+  tab2.navigate('#/login');
+  const login = tab2.click('login-form', 'submit');
+  tab2.take().resolve({ token: 'session-b', user: { username: 'b', displayName: 'B' } });
+  await login;
+  assert.ok(seen.includes('B'));
+});
+
+test('a session stored by the previous version stays signed in and is upgraded on the next save', async () => {
+  const storage = new Map([['wb_session', 'legacy-session'], ['wb_user', JSON.stringify({ username: 'old', displayName: 'Old' })]]);
+  const f = fixture({ storage });
+  assert.equal(f.probe.getSession(), 'legacy-session');
+  assert.equal(f.probe.getStoredUser().displayName, 'Old');
+  f.probe.renderNav();
+  assert.match(f.elements.get('topnav').innerHTML, />Old</);
+  const validation = f.probe.validateSession();
+  const me = f.take();
+  assert.equal(me.options.headers.Authorization, 'Bearer legacy-session');
+  me.resolve({ user: { username: 'old', displayName: 'Old' } });
+  await validation;
+  assert.deepEqual(JSON.parse(storage.get('wb_auth')), { token: 'legacy-session', user: { username: 'old', displayName: 'Old' } });
+  assert.equal(storage.has('wb_session'), false);
+  assert.equal(storage.has('wb_user'), false);
+  assert.equal(f.probe.getSession(), 'legacy-session');
+  // An old record with an unreadable user keeps its token; signing out removes every key.
+  const legacyTab = new Map([['wb_session', 'legacy-session'], ['wb_user', 'not json']]);
+  const g = fixture({ storage: legacyTab });
+  assert.equal(g.probe.getSession(), 'legacy-session');
+  assert.equal(g.probe.getStoredUser(), null);
+  g.probe.setSession(null);
+  assert.equal(legacyTab.size, 0);
+});
+
+test('a full or blocked storage never stops a sign-in from being sent or leaves a blank error', async () => {
+  for (const [hash, form, error] of [['#/login', 'login-form', 'lg-error'], ['#/register', 'reg-form', 'rg-error']]) {
+    const f = fixture({ storageFull: true });
+    f.navigate(hash);
+    const rejected = f.click(form, 'submit');
+    f.take().resolve({ error: 'Falsches Passwort' }, 401);
+    await rejected;
+    assert.equal(f.elements.get(error).textContent, 'Falsches Passwort');
+    // The server accepts, but the session cannot be stored: say so instead of failing silently.
+    const accepted = f.click(form, 'submit');
+    f.take().resolve({ token: 'session', user: { username: 'u', displayName: 'U' } });
+    await accepted;
+    assert.notEqual(f.elements.get(error).textContent, '');
+    assert.equal(f.location.hash, hash);
+  }
 });

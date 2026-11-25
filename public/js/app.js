@@ -1,6 +1,6 @@
 // Würfelblock – SPA mit Hash-Routing.
 
-import { api, getSession, getStoredUser, playerTokenFor, setPlayerToken, setSession } from './api.js';
+import { api, getSession, getStoredUser, isSessionKey, playerTokenFor, setPlayerToken, setSession } from './api.js';
 import { LABELS, MODES, allCategories, jokerApplies, manualScoreOptions, scoreCategory } from './rules.js';
 
 const app = document.getElementById('app');
@@ -899,27 +899,18 @@ function latestSubmission() {
   };
 }
 
-// Anmeldungen/Registrierungen in Absende-Reihenfolge, über alle Tabs: die Nummern liegen im
-// gemeinsamen localStorage. Eine Antwort gilt nur, wenn keine später abgeschickte Anmeldung schon
-// übernommen wurde. Ein Abmelden zählt nicht – es darf eine danach abgeschickte Anmeldung nicht verwerfen.
-const SIGN_IN_SUBMITTED = 'wb_signin_submitted';
-const SIGN_IN_APPLIED = 'wb_signin_applied';
-
-function signInNumber(key) {
-  return Number(localStorage.getItem(key)) || 0;
-}
-
-function submitSignIn() {
-  const attempt = signInNumber(SIGN_IN_SUBMITTED) + 1;
-  localStorage.setItem(SIGN_IN_SUBMITTED, String(attempt));
-  return attempt;
-}
+// Anmeldungen/Registrierungen dieses Tabs gelten in Absende-Reihenfolge: eine Antwort gilt nur, wenn
+// keine später hier abgeschickte Anmeldung schon übernommen wurde. Ein Abmelden zählt nicht – es darf
+// eine danach abgeschickte Anmeldung nicht verwerfen. Zwischen Tabs gewinnt die zuletzt eingetroffene
+// Anmeldung; die Kontoanzeige folgt ihr über das storage-Ereignis.
+let signInsSubmitted = 0;
+let signInApplied = 0;
 
 // Weiterleitung und Hinweis nur, wenn das Formular dem Nutzer noch gehört (owned).
 function signedIn(attempt, data, owned) {
-  if (attempt <= signInNumber(SIGN_IN_APPLIED)) return false;
-  localStorage.setItem(SIGN_IN_APPLIED, String(attempt));
+  if (attempt <= signInApplied) return false;
   setSession(data.token, data.user);
+  signInApplied = attempt;
   if (!owned) {
     sessionChanged();
     return false;
@@ -950,7 +941,7 @@ function viewLogin() {
     const errEl = document.getElementById('lg-error');
     errEl.textContent = '';
     const isLatest = submit();
-    const attempt = submitSignIn();
+    const attempt = ++signInsSubmitted;
     try {
       const data = await api.login(document.getElementById('lg-user').value.trim(), document.getElementById('lg-pass').value);
       if (!signedIn(attempt, data, isCurrentView(navigation) && isLatest())) return;
@@ -958,7 +949,7 @@ function viewLogin() {
       location.hash = '#/';
     } catch (err) {
       if (!isCurrentView(navigation) || !isLatest()) return;
-      errEl.textContent = err.message;
+      errEl.textContent = err.message || 'Anmeldung fehlgeschlagen.';
     }
   });
 }
@@ -988,7 +979,7 @@ function viewRegister() {
     const username = document.getElementById('rg-user').value.trim();
     const display = document.getElementById('rg-display').value.trim() || username;
     const isLatest = submit();
-    const attempt = submitSignIn();
+    const attempt = ++signInsSubmitted;
     try {
       const data = await api.register(username, display, document.getElementById('rg-pass').value);
       if (!signedIn(attempt, data, isCurrentView(navigation) && isLatest())) return;
@@ -996,7 +987,7 @@ function viewRegister() {
       location.hash = '#/';
     } catch (err) {
       if (!isCurrentView(navigation) || !isLatest()) return;
-      errEl.textContent = err.message;
+      errEl.textContent = err.message || 'Registrierung fehlgeschlagen.';
     }
   });
 }
@@ -1214,5 +1205,5 @@ validateSession();
 window.addEventListener('hashchange', route);
 // An- oder Abmeldung in einem anderen Tab: Kontoanzeige hier nachziehen.
 window.addEventListener('storage', (e) => {
-  if (e.key === null || e.key === 'wb_session') sessionChanged();
+  if (isSessionKey(e.key)) sessionChanged();
 });
