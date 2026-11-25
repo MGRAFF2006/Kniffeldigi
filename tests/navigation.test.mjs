@@ -821,6 +821,33 @@ test('a tab sends one profile save and one password change at a time, even acros
   }
 });
 
+test('a name saved in another tab updates the navbar without rebuilding open settings', async () => {
+  // Same session in two tabs: tab 2 saves a name while tab 1 has a draft and a pending password change.
+  const storage = new Map();
+  const f = fixture({ storage });
+  f.probe.setSession('session', { username: 'fixture', displayName: 'Original' });
+  f.navigate('#/settings');
+  f.take().resolve({ games: [], stats: [] });
+  await f.flush();
+  const form = f.elements.get('app').innerHTML;
+  f.elements.get('st-display').value = 'Entwurf';
+  const change = f.click('pass-form', 'submit');
+  const response = f.take();
+  storage.set('wb_user', JSON.stringify({ username: 'fixture', displayName: 'Anderer Tab' }));
+  f.storageEvent('wb_user');
+  assert.match(f.elements.get('topnav').innerHTML, />Anderer Tab</);
+  assert.equal(f.pending.length, 0, 'settings were not reloaded');
+  assert.equal(f.elements.get('app').innerHTML, form, 'the open form was not rebuilt');
+  assert.equal(f.elements.get('st-display').value, 'Entwurf');
+  response.resolve({ error: 'Das aktuelle Passwort ist falsch.' }, 401);
+  await change;
+  assert.equal(f.elements.get('st-error').textContent, 'Das aktuelle Passwort ist falsch.');
+  // A different session from another tab still rebuilds settings for the new account.
+  storage.set('wb_session', 'other-session');
+  f.storageEvent('wb_session');
+  assert.equal(f.take().url, '/api/history');
+});
+
 test('an expired session found after leaving settings still signs out', async () => {
   const f = fixture();
   f.probe.setSession('expired-session', { username: 'fixture', displayName: 'Fixture' });

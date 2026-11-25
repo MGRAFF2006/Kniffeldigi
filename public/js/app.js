@@ -1219,7 +1219,10 @@ route();
 validateSession();
 window.addEventListener('hashchange', route);
 // An- oder Abmeldung in einem anderen Tab: Kontoanzeige hier nachziehen.
-// Token und Name sind zwei Einträge; jeder löst ein eigenes Ereignis aus, damit die Anzeige beide nachzieht.
+// Nur ein neuer Token (oder geleerter Speicher) ist ein Sitzungswechsel und baut die Einstellungen neu auf.
+// Ändert sich bei gleicher Sitzung nur der Name (Profil in einem anderen Tab gespeichert), wird bloß die
+// Navigation aktualisiert: Ein offenes Einstellungsformular behält Eingaben und laufende Rückmeldungen.
 window.addEventListener('storage', (e) => {
-  if (e.key === null || e.key === 'wb_session' || e.key === 'wb_user') sessionChanged();
+  if (e.key === null || e.key === 'wb_session') sessionChanged();
+  else if (e.key === 'wb_user') renderNav();
 });
