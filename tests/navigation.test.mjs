@@ -848,6 +848,31 @@ test('a name saved in another tab updates the navbar without rebuilding open set
   assert.equal(f.take().url, '/api/history');
 });
 
+test('an account switch in another tab shows one account in open settings, in either event order', async () => {
+  // Tab 2 signs in as Bob while tab 1 shows Alice's settings. Like Chromium, tab 1 sees the other tab's
+  // two writes one at a time, each followed by its own storage event.
+  const bob = { wb_session: 'session-bob', wb_user: JSON.stringify({ username: 'bob', displayName: 'Bob' }) };
+  for (const order of [['wb_session', 'wb_user'], ['wb_user', 'wb_session']]) {
+    const storage = new Map();
+    const f = fixture({ storage });
+    f.probe.setSession('session-alice', { username: 'alice', displayName: 'Alice' });
+    f.navigate('#/settings');
+    f.take().resolve({ games: [], stats: [] });
+    await f.flush();
+    for (const key of order) {
+      storage.set(key, bob[key]);
+      f.storageEvent(key);
+    }
+    const html = f.elements.get('app').innerHTML;
+    assert.match(html, /@bob/);
+    assert.doesNotMatch(html, /@alice/);
+    assert.match(f.elements.get('topnav').innerHTML, />Bob</);
+    const history = f.pending.at(-1);
+    assert.equal(history.url, '/api/history');
+    assert.equal(history.options.headers.Authorization, 'Bearer session-bob');
+  }
+});
+
 test('an expired session found after leaving settings still signs out', async () => {
   const f = fixture();
   f.probe.setSession('expired-session', { username: 'fixture', displayName: 'Fixture' });

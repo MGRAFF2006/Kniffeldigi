@@ -997,6 +997,8 @@ function viewRegister() {
 // Pro Tab läuft höchstens eine Namens- und eine Passwortänderung; ihr Knopf bleibt so lange gesperrt,
 // auch wenn Einstellungen zwischendurch neu geöffnet werden.
 let profileSavePending = false;
+// Konto (Benutzername), für das die offenen Einstellungen aufgebaut wurden.
+let settingsUsername = null;
 let passwordChangePending = false;
 // Zählt übernommene Namensänderungen, damit ein älteres /auth/me sie nicht zurücksetzt.
 let profileSavesApplied = 0;
@@ -1011,6 +1013,7 @@ async function viewSettings() {
   const session = getSession();
   document.title = 'Einstellungen – Würfelblock';
   const user = getStoredUser();
+  settingsUsername = user ? user.username : null;
   const inkKey = localStorage.getItem('wb_ink') || 'blau';
 
   const accountHTML = user
@@ -1219,10 +1222,17 @@ route();
 validateSession();
 window.addEventListener('hashchange', route);
 // An- oder Abmeldung in einem anderen Tab: Kontoanzeige hier nachziehen.
-// Nur ein neuer Token (oder geleerter Speicher) ist ein Sitzungswechsel und baut die Einstellungen neu auf.
-// Ändert sich bei gleicher Sitzung nur der Name (Profil in einem anderen Tab gespeichert), wird bloß die
-// Navigation aktualisiert: Ein offenes Einstellungsformular behält Eingaben und laufende Rückmeldungen.
+// Ein neuer Token (oder geleerter Speicher) ist ein Sitzungswechsel und baut die Einstellungen neu auf.
+// Token und Konto sind zwei Einträge mit je eigenem Ereignis: Gehört der gespeicherte Benutzer danach zu
+// einem anderen Konto als die offenen Einstellungen, werden sie ebenfalls neu aufgebaut. Ändert sich nur
+// der Anzeigename (Profil in einem anderen Tab gespeichert), wird bloß die Navigation aktualisiert, damit
+// ein offenes Formular Eingaben und laufende Rückmeldungen behält.
 window.addEventListener('storage', (e) => {
-  if (e.key === null || e.key === 'wb_session') sessionChanged();
-  else if (e.key === 'wb_user') renderNav();
+  if (e.key === null || e.key === 'wb_session') {
+    sessionChanged();
+  } else if (e.key === 'wb_user') {
+    renderNav();
+    const username = getStoredUser()?.username ?? null;
+    if (currentHash().startsWith('#/settings') && username !== settingsUsername) route();
+  }
 });
