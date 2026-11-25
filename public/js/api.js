@@ -69,13 +69,12 @@ export const api = {
   createGame: (mode, name, entry, hostPaper = false) =>
     call('POST', '/games', { mode, name, entry, hostPaper: !!hostPaper }),
   joinGame: (code, name) => call('POST', `/games/${encodeURIComponent(code)}/join`, { name }),
-  gameState: (code, since) => {
-    const token = playerTokenFor(code);
+  // Eine offene Spielansicht übergibt den Platz, mit dem sie geöffnet wurde.
+  gameState: (code, since, token = playerTokenFor(code)) => {
     const query = since ? `?since=${since}` : '';
     return call('GET', `/games/${encodeURIComponent(code)}/state${query}`, undefined, token ? { 'X-Player-Token': token } : {});
   },
-  gameAction: (code, action) => {
-    const token = playerTokenFor(code);
+  gameAction: (code, action, token = playerTokenFor(code)) => {
     return call('POST', `/games/${encodeURIComponent(code)}/action`, action, token ? { 'X-Player-Token': token } : {});
   },
 };

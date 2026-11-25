@@ -76,6 +76,7 @@ function dieHTML(face, { held = false, index = null, clickable = false, blank = 
 // ===== Navigation =====
 
 function renderNav() {
+  const session = getSession();
   const user = getStoredUser();
   topnav.innerHTML = user
     ? `<a href="#/" class="paper-home">Startblatt</a>
@@ -89,7 +90,16 @@ function renderNav() {
   if (logout) {
     logout.addEventListener('click', async (e) => {
       e.preventDefault();
+      // Ein anderer Tab hat das Konto gewechselt: erst die neue Sitzung anzeigen, nicht sie abmelden.
+      if (session !== getSession()) { sessionChanged(); return; }
+      const navigation = navigationGeneration;
       try { await api.logout(); } catch {}
+      if (session !== getSession()) return;
+      if (!isCurrentView(navigation)) {
+        // Inzwischen läuft eine andere Ansicht – nicht wegnavigieren oder Eingaben verwerfen.
+        endSession();
+        return;
+      }
       setSession(null);
       renderNav();
       location.hash = '#/';
@@ -102,6 +112,7 @@ function renderNav() {
 // ===== Landing =====
 
 function viewLanding() {
+  const navigation = navigationGeneration;
   document.title = 'Würfelblock – Kniffel & Yatzy online';
   const name = defaultName();
   app.innerHTML = `
@@ -242,9 +253,12 @@ function viewLanding() {
     try {
       rememberName(playerName);
       const data = await api.joinGame(code, playerName);
-      setPlayerToken(data.code, data.playerToken);
+      // Ein verspäteter Beitritt darf nicht den Platz ersetzen, den der Nutzer in diesem Spiel schon nutzt.
+      if (isCurrentView(navigation) || !playerTokenFor(data.code)) setPlayerToken(data.code, data.playerToken);
+      if (!isCurrentView(navigation)) return;
       location.hash = `#/game/${data.code}`;
     } catch (err) {
+      if (!isCurrentView(navigation)) return;
       errEl.textContent = err.message;
     }
   });
@@ -256,8 +270,10 @@ function viewLanding() {
     if (code.length < 4) { errEl.textContent = 'Bitte gib den 5-stelligen Spielcode ein.'; return; }
     try {
       await api.gameState(code);
+      if (!isCurrentView(navigation)) return;
       location.hash = `#/watch/${code}`;
     } catch (err) {
+      if (!isCurrentView(navigation)) return;
       errEl.textContent = err.message;
     }
   });
@@ -272,8 +288,10 @@ function viewLanding() {
       const hostPaper = selectedEntry === 'manual' && hostPaperInput.checked;
       const data = await api.createGame(selectedMode, playerName, selectedEntry, hostPaper);
       setPlayerToken(data.code, data.playerToken);
+      if (!isCurrentView(navigation)) return;
       location.hash = `#/game/${data.code}`;
     } catch (err) {
+      if (!isCurrentView(navigation)) return;
       errEl.textContent = err.message;
     }
   });
@@ -283,22 +301,60 @@ function viewLanding() {
 
 let poller = null;
 let currentGame = null;
-let rollAnimating = false;
+let rollAnimation = null;
+let navigationGeneration = 0;
+let routedHash = null;
+
+function currentHash() {
+  return location.hash || '#/';
+}
+
+// Eine Ansicht gehört noch dem Nutzer, solange weder Route noch URL gewechselt haben
+// (ein hashchange kann noch ausstehen).
+function isCurrentView(navigation) {
+  return navigation === navigationGeneration && currentHash() === routedHash;
+}
+
+// Spielzugriff läuft über den Spieler-Token, nicht über die Konto-Sitzung.
+function isCurrentGame(game) {
+  return currentGame === game && currentHash() === routedHash;
+}
+
+// Kontodaten zeigen nur Navigation und Einstellungen; beide folgen jedem Sitzungswechsel.
+function sessionChanged() {
+  renderNav();
+  if (currentHash().startsWith('#/settings')) route();
+}
+
+function endSession() {
+  setSession(null);
+  sessionChanged();
+}
 
 function stopPolling() {
+  navigationGeneration++;
   if (poller) { clearInterval(poller); poller = null; }
+  clearTimeout(rollAnimation);
+  rollAnimation = null;
   currentGame = null;
 }
 
 async function viewGame(code, spectator) {
+  // Der Platz gehört zur Spielansicht: ein Beitritt in einem anderen Tab ersetzt den
+  // gemeinsamen gespeicherten Token, darf aber nicht für diese Ansicht weiterspielen.
+  const game = { code, version: 0, spectator, token: playerTokenFor(code) };
+  currentGame = game;
   document.title = `Spiel ${code} – Würfelblock`;
   app.innerHTML = '<p class="muted loading"><span class="spin">🎲</span> Spiel wird geladen …</p>';
   try {
-    const data = await api.gameState(code);
-    currentGame = { code: data.code, version: data.version, spectator };
+    const data = await api.gameState(code, undefined, game.token);
+    if (!isCurrentGame(game)) return;
+    game.code = data.code;
+    game.version = data.version;
     renderGame(data.state);
     poller = setInterval(pollGame, 1500);
   } catch (err) {
+    if (!isCurrentGame(game)) return;
     app.innerHTML = `
       <section class="sheet auth-wrap"><div class="sheet-head"><h2>Hoppla</h2></div>
       <div class="sheet-body"><p>${esc(err.message)}</p>
@@ -307,11 +363,12 @@ async function viewGame(code, spectator) {
 }
 
 async function pollGame() {
-  if (!currentGame || rollAnimating) return;
+  const game = currentGame;
+  if (!game || rollAnimation || !isCurrentGame(game)) return;
   try {
-    const data = await api.gameState(currentGame.code, currentGame.version);
-    if (data && currentGame) {
-      currentGame.version = data.version;
+    const data = await api.gameState(game.code, game.version, game.token);
+    if (data && isCurrentGame(game) && data.version > game.version) {
+      game.version = data.version;
       renderGame(data.state);
     }
   } catch {
@@ -320,21 +377,27 @@ async function pollGame() {
 }
 
 async function doAction(action, { animateRoll = false } = {}) {
-  if (!currentGame) return;
+  const game = currentGame;
+  if (!game || !isCurrentGame(game)) return;
   try {
-    const data = await api.gameAction(currentGame.code, action);
-    currentGame.version = data.version;
+    const data = await api.gameAction(game.code, action, game.token);
+    if (!isCurrentGame(game) || data.version < game.version) return;
+    game.version = data.version;
+    clearTimeout(rollAnimation);
+    rollAnimation = null;
     if (animateRoll) {
-      rollAnimating = true;
       app.querySelectorAll('.dice-tray .die').forEach((d) => d.classList.add('rolling'));
-      setTimeout(() => {
-        rollAnimating = false;
-        if (currentGame) renderGame(data.state);
+      const animation = setTimeout(() => {
+        if (!isCurrentGame(game) || rollAnimation !== animation) return;
+        rollAnimation = null;
+        if (data.version === game.version) renderGame(data.state);
       }, 420);
+      rollAnimation = animation;
     } else {
       renderGame(data.state);
     }
   } catch (err) {
+    if (!isCurrentGame(game)) return;
     toast(err.message, true);
   }
 }
@@ -465,6 +528,7 @@ function filledCount(player) {
 
 function renderGame(state) {
   if (!currentGame) return;
+  const game = currentGame;
   const { code, spectator } = currentGame;
   const me = state.you;
   const isPlayer = !spectator && me !== null;
@@ -669,8 +733,10 @@ function renderGame(state) {
     if (el) el.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(text);
+        if (!isCurrentGame(game)) return;
         toast(msg);
       } catch {
+        if (!isCurrentGame(game)) return;
         toast(text);
       }
     });
@@ -824,7 +890,37 @@ function openEntryModal(state, cat, current = null, forPlayer = null) {
 
 // ===== Auth =====
 
+// Nur die zuletzt abgeschickte Eingabe eines Formulars meldet Erfolg oder Fehler.
+function latestSubmission() {
+  let latest = 0;
+  return () => {
+    const submission = ++latest;
+    return () => submission === latest;
+  };
+}
+
+// Anmeldungen/Registrierungen dieses Tabs gelten in Absende-Reihenfolge: eine Antwort gilt nur, wenn
+// keine später hier abgeschickte Anmeldung schon übernommen wurde. Ein Abmelden zählt nicht – es darf
+// eine danach abgeschickte Anmeldung nicht verwerfen. Zwischen Tabs gewinnt die zuletzt eingetroffene
+// Anmeldung; die Kontoanzeige folgt ihr über das storage-Ereignis.
+let signInsSubmitted = 0;
+let signInApplied = 0;
+
+// Weiterleitung und Hinweis nur, wenn das Formular dem Nutzer noch gehört (owned).
+function signedIn(attempt, data, owned) {
+  if (attempt <= signInApplied) return false;
+  setSession(data.token, data.user);
+  signInApplied = attempt;
+  if (!owned) {
+    sessionChanged();
+    return false;
+  }
+  renderNav();
+  return true;
+}
+
 function viewLogin() {
+  const navigation = navigationGeneration;
   document.title = 'Anmelden – Würfelblock';
   app.innerHTML = `
     <section class="sheet auth-wrap">
@@ -839,23 +935,30 @@ function viewLogin() {
         <p class="auth-alt">Noch kein Konto? <a href="#/register">Jetzt registrieren</a> – dann werden deine Spiele protokolliert.</p>
       </div>
     </section>`;
+  const submit = latestSubmission();
   document.getElementById('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const errEl = document.getElementById('lg-error');
     errEl.textContent = '';
+    const isLatest = submit();
+    const attempt = ++signInsSubmitted;
     try {
       const data = await api.login(document.getElementById('lg-user').value.trim(), document.getElementById('lg-pass').value);
-      setSession(data.token, data.user);
-      renderNav();
+      if (!signedIn(attempt, data, isCurrentView(navigation) && isLatest())) return;
       toast(`Hallo, ${data.user.displayName}!`);
       location.hash = '#/';
     } catch (err) {
-      errEl.textContent = err.message;
+      if (!isCurrentView(navigation) || !isLatest()) return;
+      errEl.textContent = err.message || 'Anmeldung fehlgeschlagen.';
     }
   });
 }
 
+// Pro Tab läuft höchstens eine Registrierung; ihr Knopf bleibt so lange gesperrt.
+let registrationPending = false;
+
 function viewRegister() {
+  const navigation = navigationGeneration;
   document.title = 'Registrieren – Würfelblock';
   app.innerHTML = `
     <section class="sheet auth-wrap">
@@ -865,33 +968,57 @@ function viewRegister() {
           <div class="field"><label for="rg-user">Benutzername</label><input type="text" id="rg-user" autocomplete="username" required minlength="3" maxlength="20" /></div>
           <div class="field"><label for="rg-display">Anzeigename (steht auf dem Spielbogen)</label><input type="text" id="rg-display" maxlength="20" value="${esc(defaultName())}" /></div>
           <div class="field"><label for="rg-pass">Passwort (mind. 8 Zeichen)</label><input type="password" id="rg-pass" autocomplete="new-password" required minlength="8" /></div>
-          <div class="btn-row"><button class="btn red big" type="submit">Registrieren</button></div>
+          <div class="btn-row"><button class="btn red big" type="submit" id="rg-submit"${registrationPending ? ' disabled' : ''}>Registrieren</button></div>
           <p class="error-text" id="rg-error"></p>
         </form>
         <p class="auth-alt">Schon ein Konto? <a href="#/login">Anmelden</a></p>
       </div>
     </section>`;
+  const submit = latestSubmission();
   document.getElementById('reg-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    // Ein erneutes Absenden würde denselben Namen ein zweites Mal anlegen wollen (409) und den Erfolg verdecken.
+    if (registrationPending) return;
+    registrationPending = true;
+    document.getElementById('rg-submit').disabled = true;
     const errEl = document.getElementById('rg-error');
     errEl.textContent = '';
     const username = document.getElementById('rg-user').value.trim();
     const display = document.getElementById('rg-display').value.trim() || username;
+    const isLatest = submit();
+    const attempt = ++signInsSubmitted;
     try {
       const data = await api.register(username, display, document.getElementById('rg-pass').value);
-      setSession(data.token, data.user);
-      renderNav();
+      if (!signedIn(attempt, data, isCurrentView(navigation) && isLatest())) return;
       toast(`Willkommen, ${data.user.displayName}! Dein Konto ist bereit.`);
       location.hash = '#/';
     } catch (err) {
-      errEl.textContent = err.message;
+      if (!isCurrentView(navigation) || !isLatest()) return;
+      errEl.textContent = err.message || 'Registrierung fehlgeschlagen.';
+    } finally {
+      registrationPending = false;
+      finishPending('rg-submit');
     }
   });
 }
 
 // ===== Einstellungen =====
 
+// Pro Tab läuft höchstens eine Namens- und eine Passwortänderung; ihr Knopf bleibt so lange gesperrt,
+// auch wenn Einstellungen zwischendurch neu geöffnet werden.
+let profileSavePending = false;
+let passwordChangePending = false;
+// Zählt übernommene Namensänderungen, damit ein älteres /auth/me sie nicht zurücksetzt.
+let profileSavesApplied = 0;
+
+function finishPending(buttonId) {
+  const button = document.getElementById(buttonId);
+  if (button) button.disabled = false;
+}
+
 async function viewSettings() {
+  const navigation = navigationGeneration;
+  const session = getSession();
   document.title = 'Einstellungen – Würfelblock';
   const user = getStoredUser();
   const inkKey = localStorage.getItem('wb_ink') || 'blau';
@@ -903,13 +1030,13 @@ async function viewSettings() {
         <div class="sheet-body">
           <form id="profile-form">
             <div class="field"><label for="st-display">Anzeigename</label><input type="text" id="st-display" maxlength="20" value="${esc(user.displayName)}" /></div>
-            <div class="btn-row"><button class="btn small" type="submit">Speichern</button></div>
+            <div class="btn-row"><button class="btn small" type="submit" id="st-save"${profileSavePending ? ' disabled' : ''}>Speichern</button></div>
           </form>
           <hr class="divider" />
           <form id="pass-form">
             <div class="field"><label for="st-oldpass">Aktuelles Passwort</label><input type="password" id="st-oldpass" autocomplete="current-password" required /></div>
             <div class="field"><label for="st-newpass">Neues Passwort (mind. 8 Zeichen)</label><input type="password" id="st-newpass" autocomplete="new-password" required minlength="8" /></div>
-            <div class="btn-row"><button class="btn small" type="submit">Passwort ändern</button></div>
+            <div class="btn-row"><button class="btn small" type="submit" id="st-pass-save"${passwordChangePending ? ' disabled' : ''}>Passwort ändern</button></div>
           </form>
           <p class="error-text" id="st-error"></p>
         </div>
@@ -959,34 +1086,58 @@ async function viewSettings() {
   if (user) {
     document.getElementById('profile-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      // Das Formular gehört zum angezeigten Konto – nie mit einer anderen Sitzung absenden.
+      if (session !== getSession()) { route(); return; }
+      if (profileSavePending) return;
+      profileSavePending = true;
+      document.getElementById('st-save').disabled = true;
       const errEl = document.getElementById('st-error');
       errEl.textContent = '';
       try {
         const data = await api.updateProfile(document.getElementById('st-display').value.trim());
-        setSession(getSession(), data.user);
+        // Gespeichert ist gespeichert – auch wenn die Ansicht inzwischen gewechselt hat.
+        if (session !== getSession()) return;
+        profileSavesApplied++;
+        setSession(session, data.user);
         renderNav();
+        if (!isCurrentView(navigation)) return;
         toast('Anzeigename gespeichert!');
       } catch (err) {
+        if (!isCurrentView(navigation)) return;
         errEl.textContent = err.message;
+      } finally {
+        profileSavePending = false;
+        finishPending('st-save');
       }
     });
 
     document.getElementById('pass-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (session !== getSession()) { route(); return; }
+      if (passwordChangePending) return;
+      passwordChangePending = true;
+      document.getElementById('st-pass-save').disabled = true;
       const errEl = document.getElementById('st-error');
       errEl.textContent = '';
       try {
         await api.changePassword(document.getElementById('st-oldpass').value, document.getElementById('st-newpass').value);
+        if (!isCurrentView(navigation)) return;
         document.getElementById('pass-form').reset();
         toast('Passwort geändert!');
       } catch (err) {
+        if (!isCurrentView(navigation)) return;
         errEl.textContent = err.message;
+      } finally {
+        passwordChangePending = false;
+        finishPending('st-pass-save');
       }
     });
 
     // Historie & Statistik laden
     try {
       const { games, stats } = await api.history();
+      // Gehört zur noch offenen Seite und ihrem Formular, auch wenn ein anderer Tab das Token erneuert hat.
+      if (!isCurrentView(navigation)) return;
       const statHTML = stats.length
         ? `<div class="stats-row">${stats
             .map(
@@ -1022,10 +1173,8 @@ async function viewSettings() {
           </table>
         </div></section>`;
     } catch (err) {
-      if (err.status === 401) {
-        setSession(null);
-        renderNav();
-      }
+      // Eine abgelaufene Sitzung endet auch, wenn der Nutzer Einstellungen schon verlassen hat.
+      if (err.status === 401 && session === getSession()) endSession();
     }
   }
 }
@@ -1034,7 +1183,9 @@ async function viewSettings() {
 
 function route() {
   stopPolling();
-  const hash = location.hash || '#/';
+  closeEntryModal();
+  const hash = currentHash();
+  routedHash = hash;
   const gameMatch = hash.match(/^#\/game\/([A-Za-z0-9]+)/);
   const watchMatch = hash.match(/^#\/watch\/([A-Za-z0-9]+)/);
 
@@ -1058,12 +1209,17 @@ function route() {
 
 // Session beim Start validieren (Token könnte abgelaufen sein).
 async function validateSession() {
-  if (!getSession()) return;
+  const session = getSession();
+  if (!session) return;
+  const profileSaves = profileSavesApplied;
   try {
     const data = await api.me();
-    setSession(getSession(), data.user);
+    if (session !== getSession()) return;
+    // Ein inzwischen gespeicherter Anzeigename ist neuer als diese Antwort.
+    if (profileSaves === profileSavesApplied) setSession(session, data.user);
   } catch (err) {
-    if (err.status === 401) setSession(null);
+    if (session !== getSession()) return;
+    if (err.status === 401) endSession();
   }
   renderNav();
 }
@@ -1073,3 +1229,9 @@ renderNav();
 route();
 validateSession();
 window.addEventListener('hashchange', route);
+// An- oder Abmeldung in einem anderen Tab: nur die Navigation nachziehen. Offene Seiten werden nicht neu
+// aufgebaut, damit Eingaben und laufende Rückmeldungen erhalten bleiben (wie bisher). Ein offenes
+// Einstellungsformular einer anderen Sitzung speichert nichts, sondern zeigt beim Absenden das aktuelle Konto.
+window.addEventListener('storage', (e) => {
+  if (e.key === null || e.key === 'wb_session' || e.key === 'wb_user') renderNav();
+});

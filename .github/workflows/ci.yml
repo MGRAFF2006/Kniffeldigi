@@ -43,3 +43,5 @@ jobs:
           done
           curl --fail --silent http://127.0.0.1:8788/ >/dev/null
           node tests/api.test.mjs
+      - name: Test navigation
+        run: node --test tests/navigation.test.mjs
