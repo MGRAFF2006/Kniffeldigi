@@ -8,8 +8,8 @@ import * as rules from '../public/js/rules.js';
 const apiSource = readFileSync(new URL('../public/js/api.js', import.meta.url), 'utf8').replace(/^export /gm, '');
 const appSource = readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8').replace(/^import .*;\n/gm, '');
 
-function fixture() {
-  const storage = new Map();
+// Tabs of one browser share localStorage; pass the same storage to model a second tab.
+function fixture({ storage = new Map() } = {}) {
   const elements = new Map();
   class Element {
     value = '';
@@ -41,6 +41,7 @@ function fixture() {
   const intervals = new Map();
   const renders = [];
   const notices = [];
+  const windowListeners = {};
   let timerId = 0;
   const location = { hash: '#/', origin: 'https://example.invalid', pathname: '/' };
   const sandbox = {
@@ -66,7 +67,7 @@ function fixture() {
     setInterval: callback => { intervals.set(++timerId, callback); return timerId; },
     clearInterval: id => intervals.delete(id),
     navigator: { clipboard: { writeText: () => Promise.resolve() } },
-    window: { scrollTo() {} },
+    window: { scrollTo() {}, addEventListener: (type, callback) => { windowListeners[type] = callback; } },
     console,
   };
   vm.createContext(sandbox);
@@ -79,7 +80,12 @@ function fixture() {
       route, renderNav, getGame: () => currentGame, getAnimation: () => rollAnimation,
       setSession, getSession, getStoredUser };
   `, sandbox);
+  // Register the app's window listeners (other tabs' storage changes) without the startup route/validation.
+  const startup = appSource.slice(appSource.lastIndexOf('\napplyInk();'));
+  vm.runInContext(startup.replace(/^(applyInk|renderNav|route|validateSession)\(\);$/gm, ''), sandbox);
   const probe = sandbox.probe;
+  // Deliver the storage event a browser fires in this tab after another tab wrote `key`.
+  const storageEvent = key => windowListeners.storage?.({ key, newValue: storage.get(key) ?? null });
   const take = () => {
     assert.ok(pending.length, 'expected an API request');
     return pending.shift();
@@ -93,7 +99,7 @@ function fixture() {
     await flush();
   }
   const click = (id, type = 'click') => elements.get(id).listeners[type]({ preventDefault() {} });
-  return { probe, take, open, navigate, flush, click, location, elements, renders, notices, timeouts, intervals, sandbox, pending };
+  return { probe, take, open, navigate, flush, click, location, elements, renders, notices, timeouts, intervals, sandbox, pending, storage, storageEvent };
 }
 
 function game(code, version) {
@@ -634,4 +640,197 @@ test('navigation removes an old scoring modal, and clipboard notices belong to t
   await copy;
   assert.equal(f.elements.has('entry-modal'), false);
   assert.deepEqual(f.notices, []);
+});
+
+test('a game keeps acting with its own seat when another tab joins the same game', async () => {
+  const storage = new Map();
+  const tabA = fixture({ storage });
+  const tabB = fixture({ storage });
+  for (const [tab, name] of [[tabA, 'Seat A'], [tabB, 'Seat B']]) {
+    tab.navigate('#/');
+    tab.elements.get('join-code').value = 'AAAAA';
+    tab.elements.get('join-name').value = name;
+  }
+  const joinA = tabA.click('btn-join');
+  const joinB = tabB.click('btn-join');
+  const responseA = tabA.take();
+  const responseB = tabB.take();
+  responseA.resolve({ code: 'AAAAA', playerToken: 'seat-a' });
+  await joinA;
+  assert.equal(tabA.location.hash, '#/game/AAAAA');
+  tabA.navigate(tabA.location.hash);
+  tabA.take().resolve(game('AAAAA', 1));
+  await tabA.flush();
+  responseB.resolve({ code: 'AAAAA', playerToken: 'seat-b' });
+  await joinB;
+  assert.equal(storage.get('wb_player_AAAAA'), 'seat-b');
+  tabA.probe.doAction({ type: 'enter', category: 'ones', value: 3 });
+  assert.equal(tabA.take().options.headers['X-Player-Token'], 'seat-a', 'tab A still scores for seat A');
+  tabA.probe.pollGame();
+  assert.equal(tabA.take().options.headers['X-Player-Token'], 'seat-a');
+});
+
+test('an older sign-in cannot replace a newer one from another tab before its storage event arrives', async () => {
+  // Tab 1 submits A, then tab 2 submits and installs B; A arrives in tab 1 before B's storage event.
+  {
+    const storage = new Map();
+    const tab1 = fixture({ storage });
+    const tab2 = fixture({ storage });
+    tab1.navigate('#/login');
+    tab2.navigate('#/login');
+    const loginA = tab1.click('login-form', 'submit');
+    const responseA = tab1.take();
+    const loginB = tab2.click('login-form', 'submit');
+    tab2.take().resolve({ token: 'session-b', user: { username: 'b', displayName: 'B' } });
+    await loginB;
+    responseA.resolve({ token: 'session-a', user: { username: 'a', displayName: 'A' } });
+    await loginA;
+    assert.equal(tab1.probe.getSession(), 'session-b');
+    assert.equal(tab1.location.hash, '#/login');
+    assert.deepEqual(tab1.notices, []);
+    tab1.storageEvent('wb_session');
+    assert.match(tab1.elements.get('topnav').innerHTML, />B</);
+  }
+});
+
+test('a late storage event for another tab\'s earlier sign-in does not discard a newer local sign-in', async () => {
+  // Tab 2 installs B; tab 1 then submits C and receives B's storage event late. C still applies.
+  {
+    const storage = new Map();
+    const tab1 = fixture({ storage });
+    const tab2 = fixture({ storage });
+    tab2.navigate('#/login');
+    const loginB = tab2.click('login-form', 'submit');
+    tab2.take().resolve({ token: 'session-b', user: { username: 'b', displayName: 'B' } });
+    await loginB;
+    tab1.navigate('#/login');
+    const loginC = tab1.click('login-form', 'submit');
+    const responseC = tab1.take();
+    tab1.storageEvent('wb_session');
+    responseC.resolve({ token: 'session-c', user: { username: 'c', displayName: 'C' } });
+    await loginC;
+    assert.equal(tab1.probe.getSession(), 'session-c');
+    assert.equal(tab1.location.hash, '#/');
+    assert.equal(tab1.notices.length, 1);
+  }
+});
+
+test('the navbar cannot log out a session it does not show', async () => {
+  const storage = new Map();
+  const f = fixture({ storage });
+  f.probe.setSession('session-a', { username: 'a', displayName: 'A' });
+  f.probe.renderNav();
+  const staleLogout = f.elements.get('nav-logout').listeners.click;
+  // Another tab switched to B; this tab's storage event is still queued.
+  f.probe.setSession('session-b', { username: 'b', displayName: 'B' });
+  const logout = staleLogout({ preventDefault() {} });
+  assert.equal(f.pending.length, 0, 'no logout request is sent with B\'s token');
+  await logout;
+  assert.equal(f.probe.getSession(), 'session-b');
+  assert.match(f.elements.get('topnav').innerHTML, />B</);
+});
+
+test('only the newest submission of a sign-in form redirects, greets or shows an error', async () => {
+  const user = name => ({ token: `session-${name}`, user: { username: name, displayName: name } });
+  {
+    const f = fixture();
+    f.navigate('#/login');
+    const first = f.click('login-form', 'submit');
+    const firstResponse = f.take();
+    const second = f.click('login-form', 'submit');
+    const secondResponse = f.take();
+    firstResponse.resolve(user('A'));
+    await first;
+    assert.equal(f.location.hash, '#/login', 'the superseded submission does not redirect');
+    secondResponse.resolve(user('B'));
+    await second;
+    assert.equal(f.probe.getSession(), 'session-B');
+    assert.equal(f.location.hash, '#/');
+    assert.deepEqual(f.notices.map(([message]) => message), ['Hallo, B!']);
+  }
+  {
+    const f = fixture();
+    f.navigate('#/login');
+    const first = f.click('login-form', 'submit');
+    const firstResponse = f.take();
+    const second = f.click('login-form', 'submit');
+    const secondResponse = f.take();
+    firstResponse.resolve(user('A'));
+    await first;
+    secondResponse.resolve({ error: 'Falsches Passwort' }, 401);
+    await second;
+    assert.equal(f.location.hash, '#/login');
+    assert.equal(f.elements.get('lg-error').textContent, 'Falsches Passwort', 'the newer failure is visible');
+  }
+  {
+    const f = fixture();
+    f.navigate('#/register');
+    const first = f.click('reg-form', 'submit');
+    const firstResponse = f.take();
+    const second = f.click('reg-form', 'submit');
+    f.take().resolve({ error: 'newer error' }, 400);
+    await second;
+    firstResponse.resolve({ error: 'older error' }, 400);
+    await first;
+    assert.equal(f.elements.get('rg-error').textContent, 'newer error');
+  }
+});
+
+test('startup validation cannot revert a display name saved after it was sent', async () => {
+  const f = fixture();
+  f.probe.setSession('session', { username: 'fixture', displayName: 'Old' });
+  const validation = f.probe.validateSession();
+  const me = f.take();
+  f.navigate('#/settings');
+  f.take().resolve({ games: [], stats: [] });
+  await f.flush();
+  const save = f.click('profile-form', 'submit');
+  f.take().resolve({ user: { username: 'fixture', displayName: 'New' } });
+  await save;
+  me.resolve({ user: { username: 'fixture', displayName: 'Old' } });
+  await validation;
+  assert.equal(f.probe.getStoredUser().displayName, 'New');
+  assert.match(f.elements.get('topnav').innerHTML, />New</);
+});
+
+test('an older profile or password rejection is not shown after a newer save succeeded', async () => {
+  const f = fixture();
+  f.probe.setSession('session', { username: 'fixture', displayName: 'Original' });
+  f.navigate('#/settings');
+  f.take().resolve({ games: [], stats: [] });
+  await f.flush();
+  const older = f.click('profile-form', 'submit');
+  const olderResponse = f.take();
+  const newer = f.click('profile-form', 'submit');
+  f.take().resolve({ user: { username: 'fixture', displayName: 'Newer' } });
+  await newer;
+  olderResponse.resolve({ error: 'older failure' }, 400);
+  await older;
+  assert.equal(f.elements.get('st-error').textContent, '');
+  assert.equal(f.probe.getStoredUser().displayName, 'Newer');
+  assert.deepEqual(f.notices.map(([message]) => message), ['Anzeigename gespeichert!']);
+  // The password form follows the same rule.
+  const olderPassword = f.click('pass-form', 'submit');
+  const olderPasswordResponse = f.take();
+  const newerPassword = f.click('pass-form', 'submit');
+  f.take().resolve({ success: true });
+  await newerPassword;
+  olderPasswordResponse.resolve({ error: 'Altes Passwort falsch' }, 400);
+  await olderPassword;
+  assert.equal(f.elements.get('st-error').textContent, '');
+});
+
+test('an expired session found after leaving settings still signs out', async () => {
+  const f = fixture();
+  f.probe.setSession('expired-session', { username: 'fixture', displayName: 'Fixture' });
+  f.probe.renderNav();
+  f.navigate('#/settings');
+  const history = f.take();
+  f.navigate('#/login');
+  const typed = f.elements.get('lg-user');
+  history.resolve({ error: 'expired' }, 401);
+  await f.flush();
+  assert.equal(f.probe.getSession(), null);
+  assert.equal(f.elements.has('nav-logout'), false);
+  assert.equal(f.elements.get('lg-user'), typed, 'the login form is not rebuilt');
 });

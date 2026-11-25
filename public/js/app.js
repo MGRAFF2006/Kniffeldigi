@@ -76,6 +76,7 @@ function dieHTML(face, { held = false, index = null, clickable = false, blank = 
 // ===== Navigation =====
 
 function renderNav() {
+  const session = getSession();
   const user = getStoredUser();
   topnav.innerHTML = user
     ? `<a href="#/" class="paper-home">Startblatt</a>
@@ -89,8 +90,9 @@ function renderNav() {
   if (logout) {
     logout.addEventListener('click', async (e) => {
       e.preventDefault();
+      // Ein anderer Tab hat das Konto gewechselt: erst die neue Sitzung anzeigen, nicht sie abmelden.
+      if (session !== getSession()) { sessionChanged(); return; }
       const navigation = navigationGeneration;
-      const session = getSession();
       try { await api.logout(); } catch {}
       if (session !== getSession()) return;
       if (!isCurrentView(navigation)) {
@@ -338,12 +340,14 @@ function stopPolling() {
 }
 
 async function viewGame(code, spectator) {
-  const game = { code, version: 0, spectator };
+  // Der Platz gehört zur Spielansicht: ein Beitritt in einem anderen Tab ersetzt den
+  // gemeinsamen gespeicherten Token, darf aber nicht für diese Ansicht weiterspielen.
+  const game = { code, version: 0, spectator, token: playerTokenFor(code) };
   currentGame = game;
   document.title = `Spiel ${code} – Würfelblock`;
   app.innerHTML = '<p class="muted loading"><span class="spin">🎲</span> Spiel wird geladen …</p>';
   try {
-    const data = await api.gameState(code);
+    const data = await api.gameState(code, undefined, game.token);
     if (!isCurrentGame(game)) return;
     game.code = data.code;
     game.version = data.version;
@@ -362,7 +366,7 @@ async function pollGame() {
   const game = currentGame;
   if (!game || rollAnimation || !isCurrentGame(game)) return;
   try {
-    const data = await api.gameState(game.code, game.version);
+    const data = await api.gameState(game.code, game.version, game.token);
     if (data && isCurrentGame(game) && data.version > game.version) {
       game.version = data.version;
       renderGame(data.state);
@@ -376,7 +380,7 @@ async function doAction(action, { animateRoll = false } = {}) {
   const game = currentGame;
   if (!game || !isCurrentGame(game)) return;
   try {
-    const data = await api.gameAction(game.code, action);
+    const data = await api.gameAction(game.code, action, game.token);
     if (!isCurrentGame(game) || data.version < game.version) return;
     game.version = data.version;
     clearTimeout(rollAnimation);
@@ -886,19 +890,37 @@ function openEntryModal(state, cat, current = null, forPlayer = null) {
 
 // ===== Auth =====
 
-// Anmeldungen/Registrierungen in Absende-Reihenfolge: eine Antwort gilt nur, wenn keine später
-// abgeschickte (oder in einem anderen Tab erfolgte) Anmeldung schon übernommen wurde. Ein Abmelden
-// der vorherigen Sitzung zählt nicht – es darf eine danach abgeschickte Anmeldung nicht verwerfen.
-let signInSubmissions = 0;
-let appliedSignIn = 0;
+// Nur die zuletzt abgeschickte Eingabe eines Formulars meldet Erfolg oder Fehler.
+function latestSubmission() {
+  let latest = 0;
+  return () => {
+    const submission = ++latest;
+    return () => submission === latest;
+  };
+}
 
-// Weiterleitung und Hinweis entfallen, wenn der Nutzer schon woanders ist.
-function signedIn(navigation, attempt, data) {
-  if (attempt <= appliedSignIn) return false;
-  appliedSignIn = attempt;
-  const current = isCurrentView(navigation);
+// Anmeldungen/Registrierungen in Absende-Reihenfolge, über alle Tabs: die Nummern liegen im
+// gemeinsamen localStorage. Eine Antwort gilt nur, wenn keine später abgeschickte Anmeldung schon
+// übernommen wurde. Ein Abmelden zählt nicht – es darf eine danach abgeschickte Anmeldung nicht verwerfen.
+const SIGN_IN_SUBMITTED = 'wb_signin_submitted';
+const SIGN_IN_APPLIED = 'wb_signin_applied';
+
+function signInNumber(key) {
+  return Number(localStorage.getItem(key)) || 0;
+}
+
+function submitSignIn() {
+  const attempt = signInNumber(SIGN_IN_SUBMITTED) + 1;
+  localStorage.setItem(SIGN_IN_SUBMITTED, String(attempt));
+  return attempt;
+}
+
+// Weiterleitung und Hinweis nur, wenn das Formular dem Nutzer noch gehört (owned).
+function signedIn(attempt, data, owned) {
+  if (attempt <= signInNumber(SIGN_IN_APPLIED)) return false;
+  localStorage.setItem(SIGN_IN_APPLIED, String(attempt));
   setSession(data.token, data.user);
-  if (!current) {
+  if (!owned) {
     sessionChanged();
     return false;
   }
@@ -922,18 +944,20 @@ function viewLogin() {
         <p class="auth-alt">Noch kein Konto? <a href="#/register">Jetzt registrieren</a> – dann werden deine Spiele protokolliert.</p>
       </div>
     </section>`;
+  const submit = latestSubmission();
   document.getElementById('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const errEl = document.getElementById('lg-error');
     errEl.textContent = '';
-    const attempt = ++signInSubmissions;
+    const isLatest = submit();
+    const attempt = submitSignIn();
     try {
       const data = await api.login(document.getElementById('lg-user').value.trim(), document.getElementById('lg-pass').value);
-      if (!signedIn(navigation, attempt, data)) return;
+      if (!signedIn(attempt, data, isCurrentView(navigation) && isLatest())) return;
       toast(`Hallo, ${data.user.displayName}!`);
       location.hash = '#/';
     } catch (err) {
-      if (!isCurrentView(navigation)) return;
+      if (!isCurrentView(navigation) || !isLatest()) return;
       errEl.textContent = err.message;
     }
   });
@@ -956,20 +980,22 @@ function viewRegister() {
         <p class="auth-alt">Schon ein Konto? <a href="#/login">Anmelden</a></p>
       </div>
     </section>`;
+  const submit = latestSubmission();
   document.getElementById('reg-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const errEl = document.getElementById('rg-error');
     errEl.textContent = '';
     const username = document.getElementById('rg-user').value.trim();
     const display = document.getElementById('rg-display').value.trim() || username;
-    const attempt = ++signInSubmissions;
+    const isLatest = submit();
+    const attempt = submitSignIn();
     try {
       const data = await api.register(username, display, document.getElementById('rg-pass').value);
-      if (!signedIn(navigation, attempt, data)) return;
+      if (!signedIn(attempt, data, isCurrentView(navigation) && isLatest())) return;
       toast(`Willkommen, ${data.user.displayName}! Dein Konto ist bereit.`);
       location.hash = '#/';
     } catch (err) {
-      if (!isCurrentView(navigation)) return;
+      if (!isCurrentView(navigation) || !isLatest()) return;
       errEl.textContent = err.message;
     }
   });
@@ -1048,12 +1074,14 @@ async function viewSettings() {
   });
 
   if (user) {
+    const submitProfile = latestSubmission();
     document.getElementById('profile-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       // Das Formular gehört zum angezeigten Konto – nie mit einer anderen Sitzung absenden.
       if (session !== getSession()) { route(); return; }
       const errEl = document.getElementById('st-error');
       errEl.textContent = '';
+      const isLatest = submitProfile();
       const save = ++profileSaves;
       try {
         const data = await api.updateProfile(document.getElementById('st-display').value.trim());
@@ -1063,26 +1091,28 @@ async function viewSettings() {
         appliedProfileSave = save;
         setSession(session, data.user);
         renderNav();
-        if (!isCurrentView(navigation)) return;
+        if (!isCurrentView(navigation) || !isLatest()) return;
         toast('Anzeigename gespeichert!');
       } catch (err) {
-        if (!isCurrentView(navigation)) return;
+        if (!isCurrentView(navigation) || !isLatest()) return;
         errEl.textContent = err.message;
       }
     });
 
+    const submitPassword = latestSubmission();
     document.getElementById('pass-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       if (session !== getSession()) { route(); return; }
       const errEl = document.getElementById('st-error');
       errEl.textContent = '';
+      const isLatest = submitPassword();
       try {
         await api.changePassword(document.getElementById('st-oldpass').value, document.getElementById('st-newpass').value);
-        if (!isCurrentView(navigation)) return;
+        if (!isCurrentView(navigation) || !isLatest()) return;
         document.getElementById('pass-form').reset();
         toast('Passwort geändert!');
       } catch (err) {
-        if (!isCurrentView(navigation)) return;
+        if (!isCurrentView(navigation) || !isLatest()) return;
         errEl.textContent = err.message;
       }
     });
@@ -1126,8 +1156,8 @@ async function viewSettings() {
           </table>
         </div></section>`;
     } catch (err) {
-      if (!isCurrentView(navigation) || session !== getSession()) return;
-      if (err.status === 401) endSession();
+      // Eine abgelaufene Sitzung endet auch, wenn der Nutzer Einstellungen schon verlassen hat.
+      if (err.status === 401 && session === getSession()) endSession();
     }
   }
 }
@@ -1164,10 +1194,12 @@ function route() {
 async function validateSession() {
   const session = getSession();
   if (!session) return;
+  const profileSave = appliedProfileSave;
   try {
     const data = await api.me();
     if (session !== getSession()) return;
-    setSession(session, data.user);
+    // Ein inzwischen gespeicherter Anzeigename ist neuer als diese Antwort.
+    if (profileSave === appliedProfileSave) setSession(session, data.user);
   } catch (err) {
     if (session !== getSession()) return;
     if (err.status === 401) endSession();
@@ -1182,7 +1214,5 @@ validateSession();
 window.addEventListener('hashchange', route);
 // An- oder Abmeldung in einem anderen Tab: Kontoanzeige hier nachziehen.
 window.addEventListener('storage', (e) => {
-  // Eine Anmeldung in einem anderen Tab ersetzt alle hier noch ausstehenden.
-  if (e.key === 'wb_session' && e.newValue) appliedSignIn = signInSubmissions;
   if (e.key === null || e.key === 'wb_session') sessionChanged();
 });
