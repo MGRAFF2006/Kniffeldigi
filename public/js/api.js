@@ -1,51 +1,28 @@
 // Kleiner API-Client. Session-Token und Spieler-Tokens liegen im localStorage.
 
-// Token und Nutzer liegen in EINEM Eintrag: ein anderer Tab sieht nie den Token des einen und
-// den Namen des anderen Kontos. Ältere Versionen speicherten beides getrennt (wb_session/wb_user);
-// solche Anmeldungen werden weiter gelesen und beim nächsten Speichern umgestellt.
-const AUTH_KEY = 'wb_auth';
-const LEGACY_SESSION_KEY = 'wb_session';
-const LEGACY_USER_KEY = 'wb_user';
+const SESSION_KEY = 'wb_session';
+const USER_KEY = 'wb_user';
 
-function parse(json) {
+export function getSession() {
+  return localStorage.getItem(SESSION_KEY);
+}
+
+export function getStoredUser() {
   try {
-    return JSON.parse(json);
+    return JSON.parse(localStorage.getItem(USER_KEY));
   } catch {
     return null;
   }
 }
 
-function getAuth() {
-  const auth = parse(localStorage.getItem(AUTH_KEY));
-  if (auth && auth.token) return { token: auth.token, user: auth.user ?? null };
-  const token = localStorage.getItem(LEGACY_SESSION_KEY);
-  return token ? { token, user: parse(localStorage.getItem(LEGACY_USER_KEY)) } : null;
-}
-
-export function getSession() {
-  return getAuth()?.token ?? null;
-}
-
-export function getStoredUser() {
-  return getAuth()?.user ?? null;
-}
-
 export function setSession(token, user) {
   if (token) {
-    localStorage.setItem(AUTH_KEY, JSON.stringify({ token, user }));
-    localStorage.removeItem(LEGACY_SESSION_KEY);
-    localStorage.removeItem(LEGACY_USER_KEY);
+    localStorage.setItem(SESSION_KEY, token);
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
   } else {
-    // Alte Einträge zuerst: bis zuletzt wb_auth verschwindet, liest ein anderer Tab keine halbe Sitzung.
-    localStorage.removeItem(LEGACY_SESSION_KEY);
-    localStorage.removeItem(LEGACY_USER_KEY);
-    localStorage.removeItem(AUTH_KEY);
+    localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(USER_KEY);
   }
-}
-
-// Ob eine Änderung in einem anderen Tab die Anmeldung betrifft (null: Speicher geleert).
-export function isSessionKey(key) {
-  return key === null || key === AUTH_KEY || key === LEGACY_SESSION_KEY || key === LEGACY_USER_KEY;
 }
 
 export function playerTokenFor(code) {

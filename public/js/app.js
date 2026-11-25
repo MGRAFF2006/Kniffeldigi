@@ -1,6 +1,6 @@
 // Würfelblock – SPA mit Hash-Routing.
 
-import { api, getSession, getStoredUser, isSessionKey, playerTokenFor, setPlayerToken, setSession } from './api.js';
+import { api, getSession, getStoredUser, playerTokenFor, setPlayerToken, setSession } from './api.js';
 import { LABELS, MODES, allCategories, jokerApplies, manualScoreOptions, scoreCategory } from './rules.js';
 
 const app = document.getElementById('app');
@@ -994,8 +994,17 @@ function viewRegister() {
 
 // ===== Einstellungen =====
 
-let profileSaves = 0;
-let appliedProfileSave = 0;
+// Pro Tab läuft höchstens eine Namens- und eine Passwortänderung; ihr Knopf bleibt so lange gesperrt,
+// auch wenn Einstellungen zwischendurch neu geöffnet werden.
+let profileSavePending = false;
+let passwordChangePending = false;
+// Zählt übernommene Namensänderungen, damit ein älteres /auth/me sie nicht zurücksetzt.
+let profileSavesApplied = 0;
+
+function finishPending(buttonId) {
+  const button = document.getElementById(buttonId);
+  if (button) button.disabled = false;
+}
 
 async function viewSettings() {
   const navigation = navigationGeneration;
@@ -1011,13 +1020,13 @@ async function viewSettings() {
         <div class="sheet-body">
           <form id="profile-form">
             <div class="field"><label for="st-display">Anzeigename</label><input type="text" id="st-display" maxlength="20" value="${esc(user.displayName)}" /></div>
-            <div class="btn-row"><button class="btn small" type="submit">Speichern</button></div>
+            <div class="btn-row"><button class="btn small" type="submit" id="st-save"${profileSavePending ? ' disabled' : ''}>Speichern</button></div>
           </form>
           <hr class="divider" />
           <form id="pass-form">
             <div class="field"><label for="st-oldpass">Aktuelles Passwort</label><input type="password" id="st-oldpass" autocomplete="current-password" required /></div>
             <div class="field"><label for="st-newpass">Neues Passwort (mind. 8 Zeichen)</label><input type="password" id="st-newpass" autocomplete="new-password" required minlength="8" /></div>
-            <div class="btn-row"><button class="btn small" type="submit">Passwort ändern</button></div>
+            <div class="btn-row"><button class="btn small" type="submit" id="st-pass-save"${passwordChangePending ? ' disabled' : ''}>Passwort ändern</button></div>
           </form>
           <p class="error-text" id="st-error"></p>
         </div>
@@ -1065,46 +1074,52 @@ async function viewSettings() {
   });
 
   if (user) {
-    const submitProfile = latestSubmission();
     document.getElementById('profile-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       // Das Formular gehört zum angezeigten Konto – nie mit einer anderen Sitzung absenden.
       if (session !== getSession()) { route(); return; }
+      if (profileSavePending) return;
+      profileSavePending = true;
+      document.getElementById('st-save').disabled = true;
       const errEl = document.getElementById('st-error');
       errEl.textContent = '';
-      const isLatest = submitProfile();
-      const save = ++profileSaves;
       try {
         const data = await api.updateProfile(document.getElementById('st-display').value.trim());
-        // Gespeichert ist gespeichert – auch wenn die Ansicht inzwischen gewechselt hat –,
-        // aber eine ältere Antwort überschreibt keinen neueren Namen.
-        if (session !== getSession() || save < appliedProfileSave) return;
-        appliedProfileSave = save;
+        // Gespeichert ist gespeichert – auch wenn die Ansicht inzwischen gewechselt hat.
+        if (session !== getSession()) return;
+        profileSavesApplied++;
         setSession(session, data.user);
         renderNav();
-        if (!isCurrentView(navigation) || !isLatest()) return;
+        if (!isCurrentView(navigation)) return;
         toast('Anzeigename gespeichert!');
       } catch (err) {
-        if (!isCurrentView(navigation) || !isLatest()) return;
+        if (!isCurrentView(navigation)) return;
         errEl.textContent = err.message;
+      } finally {
+        profileSavePending = false;
+        finishPending('st-save');
       }
     });
 
-    const submitPassword = latestSubmission();
     document.getElementById('pass-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       if (session !== getSession()) { route(); return; }
+      if (passwordChangePending) return;
+      passwordChangePending = true;
+      document.getElementById('st-pass-save').disabled = true;
       const errEl = document.getElementById('st-error');
       errEl.textContent = '';
-      const isLatest = submitPassword();
       try {
         await api.changePassword(document.getElementById('st-oldpass').value, document.getElementById('st-newpass').value);
-        if (!isCurrentView(navigation) || !isLatest()) return;
+        if (!isCurrentView(navigation)) return;
         document.getElementById('pass-form').reset();
         toast('Passwort geändert!');
       } catch (err) {
-        if (!isCurrentView(navigation) || !isLatest()) return;
+        if (!isCurrentView(navigation)) return;
         errEl.textContent = err.message;
+      } finally {
+        passwordChangePending = false;
+        finishPending('st-pass-save');
       }
     });
 
@@ -1185,12 +1200,12 @@ function route() {
 async function validateSession() {
   const session = getSession();
   if (!session) return;
-  const profileSave = appliedProfileSave;
+  const profileSaves = profileSavesApplied;
   try {
     const data = await api.me();
     if (session !== getSession()) return;
     // Ein inzwischen gespeicherter Anzeigename ist neuer als diese Antwort.
-    if (profileSave === appliedProfileSave) setSession(session, data.user);
+    if (profileSaves === profileSavesApplied) setSession(session, data.user);
   } catch (err) {
     if (session !== getSession()) return;
     if (err.status === 401) endSession();
@@ -1204,6 +1219,7 @@ route();
 validateSession();
 window.addEventListener('hashchange', route);
 // An- oder Abmeldung in einem anderen Tab: Kontoanzeige hier nachziehen.
+// Token und Name sind zwei Einträge; jeder löst ein eigenes Ereignis aus, damit die Anzeige beide nachzieht.
 window.addEventListener('storage', (e) => {
-  if (isSessionKey(e.key)) sessionChanged();
+  if (e.key === null || e.key === 'wb_session' || e.key === 'wb_user') sessionChanged();
 });

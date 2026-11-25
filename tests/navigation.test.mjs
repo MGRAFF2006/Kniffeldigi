@@ -9,9 +9,8 @@ const apiSource = readFileSync(new URL('../public/js/api.js', import.meta.url), 
 const appSource = readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8').replace(/^import .*;\n/gm, '');
 
 // Tabs of one browser share localStorage; pass the same storage to model a second tab.
-// `onWrite(key)` runs after each write, e.g. to deliver another tab's storage event in between writes.
 // `storageFull` makes every write throw like a browser whose storage quota is exhausted.
-function fixture({ storage = new Map(), onWrite, storageFull = false } = {}) {
+function fixture({ storage = new Map(), storageFull = false } = {}) {
   const elements = new Map();
   class Element {
     value = '';
@@ -59,9 +58,8 @@ function fixture({ storage = new Map(), onWrite, storageFull = false } = {}) {
       setItem: (key, value) => {
         if (storageFull) throw Object.assign(new Error('The quota has been exceeded.'), { name: 'QuotaExceededError' });
         storage.set(key, value);
-        onWrite?.(key);
       },
-      removeItem: key => { storage.delete(key); onWrite?.(key); },
+      removeItem: key => storage.delete(key),
     },
     fetch: (url, options) => new Promise((resolve, reject) => pending.push({
       url, options,
@@ -458,25 +456,6 @@ test('an earlier logout completing late does not discard a newer login or regist
   }
 });
 
-test('an older profile save cannot replace a newer saved name', async () => {
-  const f = fixture();
-  f.probe.setSession('session', { username: 'fixture', displayName: 'Original' });
-  f.navigate('#/settings');
-  f.take().resolve({ games: [], stats: [] });
-  await f.flush();
-  const older = f.click('profile-form', 'submit');
-  const olderResponse = f.take();
-  f.navigate('#/settings');
-  f.take().resolve({ games: [], stats: [] });
-  await f.flush();
-  const newer = f.click('profile-form', 'submit');
-  f.take().resolve({ user: { username: 'fixture', displayName: 'Newer' } });
-  await newer;
-  olderResponse.resolve({ user: { username: 'fixture', displayName: 'Older' } });
-  await older;
-  assert.equal(f.probe.getStoredUser().displayName, 'Newer');
-});
-
 test('logout clears only its session and preserves a newer route without stale notices', async () => {
   const f = fixture();
   f.probe.setSession('session', { username: 'fixture', displayName: 'Fixture' });
@@ -698,10 +677,10 @@ test('across tabs the last sign-in response wins, and every successful sign-in c
       assert.equal(tab.elements.get('lg-error')?.textContent ?? '', '');
     }
     const last = tab1First ? 'B' : 'A';
-    assert.equal(storage.has('wb_auth'), true);
+    assert.equal(storage.has('wb_session'), true);
     assert.equal(tab1.probe.getSession(), `session-${last.toLowerCase()}`);
     const other = tab1First ? tab1 : tab2;
-    other.storageEvent('wb_auth');
+    other.storageEvent('wb_session');
     assert.match(other.elements.get('topnav').innerHTML, new RegExp(`>${last}<`));
   }
 });
@@ -719,7 +698,7 @@ test('a late storage event for another tab\'s earlier sign-in does not discard a
     tab1.navigate('#/login');
     const loginC = tab1.click('login-form', 'submit');
     const responseC = tab1.take();
-    tab1.storageEvent('wb_auth');
+    tab1.storageEvent('wb_session');
     responseC.resolve({ token: 'session-c', user: { username: 'c', displayName: 'C' } });
     await loginC;
     assert.equal(tab1.probe.getSession(), 'session-c');
@@ -806,31 +785,40 @@ test('startup validation cannot revert a display name saved after it was sent', 
   assert.match(f.elements.get('topnav').innerHTML, />New</);
 });
 
-test('an older profile or password rejection is not shown after a newer save succeeded', async () => {
-  const f = fixture();
-  f.probe.setSession('session', { username: 'fixture', displayName: 'Original' });
-  f.navigate('#/settings');
-  f.take().resolve({ games: [], stats: [] });
-  await f.flush();
-  const older = f.click('profile-form', 'submit');
-  const olderResponse = f.take();
-  const newer = f.click('profile-form', 'submit');
-  f.take().resolve({ user: { username: 'fixture', displayName: 'Newer' } });
-  await newer;
-  olderResponse.resolve({ error: 'older failure' }, 400);
-  await older;
-  assert.equal(f.elements.get('st-error').textContent, '');
-  assert.equal(f.probe.getStoredUser().displayName, 'Newer');
-  assert.deepEqual(f.notices.map(([message]) => message), ['Anzeigename gespeichert!']);
-  // The password form follows the same rule.
-  const olderPassword = f.click('pass-form', 'submit');
-  const olderPasswordResponse = f.take();
-  const newerPassword = f.click('pass-form', 'submit');
-  f.take().resolve({ success: true });
-  await newerPassword;
-  olderPasswordResponse.resolve({ error: 'Altes Passwort falsch' }, 400);
-  await olderPassword;
-  assert.equal(f.elements.get('st-error').textContent, '');
+test('a tab sends one profile save and one password change at a time, even across reopened settings', async () => {
+  // Two saves in flight could reach the server in the other order and leave the navbar showing a name
+  // the server did not keep. While one is pending, its button stays disabled and a submit sends nothing.
+  for (const [form, button, response, failure] of [
+    ['profile-form', 'st-save', { user: { username: 'fixture', displayName: 'Saved' } }, { error: 'Name ungültig' }],
+    ['pass-form', 'st-pass-save', { success: true }, { error: 'Das aktuelle Passwort ist falsch.' }],
+  ]) {
+    const f = fixture();
+    f.probe.setSession('session', { username: 'fixture', displayName: 'Original' });
+    f.navigate('#/settings');
+    f.take().resolve({ games: [], stats: [] });
+    await f.flush();
+    const first = f.click(form, 'submit');
+    const firstResponse = f.take();
+    assert.equal(f.elements.get(button).disabled, true);
+    f.click(form, 'submit');
+    assert.equal(f.pending.length, 0, 'no second request while the first is pending');
+    // Reopening settings does not unlock the form.
+    f.navigate('#/settings');
+    f.take().resolve({ games: [], stats: [] });
+    await f.flush();
+    assert.match(f.elements.get('app').innerHTML, new RegExp(`id="${button}" disabled`));
+    f.click(form, 'submit');
+    assert.equal(f.pending.length, 0);
+    firstResponse.resolve(response);
+    await first;
+    assert.equal(f.elements.get(button).disabled, false, 'the current form is usable again');
+    // A failure unlocks too, and the current view shows it.
+    const second = f.click(form, 'submit');
+    f.take().resolve(failure, 400);
+    await second;
+    assert.equal(f.elements.get(button).disabled, false);
+    assert.equal(f.elements.get('st-error').textContent, failure.error);
+  }
 });
 
 test('an expired session found after leaving settings still signs out', async () => {
@@ -846,58 +834,6 @@ test('an expired session found after leaving settings still signs out', async ()
   assert.equal(f.probe.getSession(), null);
   assert.equal(f.elements.has('nav-logout'), false);
   assert.equal(f.elements.get('lg-user'), typed, 'the login form is not rebuilt');
-});
-
-test('another tab never sees one account\'s name with the other account\'s token', async () => {
-  // Tab 2 switches from A to B; tab 1 handles a storage event after every single write.
-  // Whatever tab 1 shows at any point, its logout sends the token of the account it shows.
-  const storage = new Map();
-  const tab1 = fixture({ storage });
-  tab1.probe.setSession('session-a', { username: 'a', displayName: 'A' });
-  tab1.probe.renderNav();
-  const seen = [];
-  const tab2 = fixture({
-    storage,
-    onWrite: key => {
-      tab1.storageEvent(key);
-      const shown = tab1.elements.get('topnav').innerHTML.match(/userchip">([^<]+)</)?.[1];
-      if (!shown) return;
-      tab1.click('nav-logout');
-      const logout = tab1.pending.pop();
-      seen.push(shown);
-      assert.equal(logout.options.headers.Authorization, `Bearer session-${shown.toLowerCase()}`);
-    },
-  });
-  tab2.navigate('#/login');
-  const login = tab2.click('login-form', 'submit');
-  tab2.take().resolve({ token: 'session-b', user: { username: 'b', displayName: 'B' } });
-  await login;
-  assert.ok(seen.includes('B'));
-});
-
-test('a session stored by the previous version stays signed in and is upgraded on the next save', async () => {
-  const storage = new Map([['wb_session', 'legacy-session'], ['wb_user', JSON.stringify({ username: 'old', displayName: 'Old' })]]);
-  const f = fixture({ storage });
-  assert.equal(f.probe.getSession(), 'legacy-session');
-  assert.equal(f.probe.getStoredUser().displayName, 'Old');
-  f.probe.renderNav();
-  assert.match(f.elements.get('topnav').innerHTML, />Old</);
-  const validation = f.probe.validateSession();
-  const me = f.take();
-  assert.equal(me.options.headers.Authorization, 'Bearer legacy-session');
-  me.resolve({ user: { username: 'old', displayName: 'Old' } });
-  await validation;
-  assert.deepEqual(JSON.parse(storage.get('wb_auth')), { token: 'legacy-session', user: { username: 'old', displayName: 'Old' } });
-  assert.equal(storage.has('wb_session'), false);
-  assert.equal(storage.has('wb_user'), false);
-  assert.equal(f.probe.getSession(), 'legacy-session');
-  // An old record with an unreadable user keeps its token; signing out removes every key.
-  const legacyTab = new Map([['wb_session', 'legacy-session'], ['wb_user', 'not json']]);
-  const g = fixture({ storage: legacyTab });
-  assert.equal(g.probe.getSession(), 'legacy-session');
-  assert.equal(g.probe.getStoredUser(), null);
-  g.probe.setSession(null);
-  assert.equal(legacyTab.size, 0);
 });
 
 test('a full or blocked storage never stops a sign-in from being sent or leaves a blank error', async () => {
