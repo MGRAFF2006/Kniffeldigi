@@ -954,6 +954,9 @@ function viewLogin() {
   });
 }
 
+// Pro Tab läuft höchstens eine Registrierung; ihr Knopf bleibt so lange gesperrt.
+let registrationPending = false;
+
 function viewRegister() {
   const navigation = navigationGeneration;
   document.title = 'Registrieren – Würfelblock';
@@ -965,7 +968,7 @@ function viewRegister() {
           <div class="field"><label for="rg-user">Benutzername</label><input type="text" id="rg-user" autocomplete="username" required minlength="3" maxlength="20" /></div>
           <div class="field"><label for="rg-display">Anzeigename (steht auf dem Spielbogen)</label><input type="text" id="rg-display" maxlength="20" value="${esc(defaultName())}" /></div>
           <div class="field"><label for="rg-pass">Passwort (mind. 8 Zeichen)</label><input type="password" id="rg-pass" autocomplete="new-password" required minlength="8" /></div>
-          <div class="btn-row"><button class="btn red big" type="submit">Registrieren</button></div>
+          <div class="btn-row"><button class="btn red big" type="submit" id="rg-submit"${registrationPending ? ' disabled' : ''}>Registrieren</button></div>
           <p class="error-text" id="rg-error"></p>
         </form>
         <p class="auth-alt">Schon ein Konto? <a href="#/login">Anmelden</a></p>
@@ -974,6 +977,10 @@ function viewRegister() {
   const submit = latestSubmission();
   document.getElementById('reg-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    // Ein erneutes Absenden würde denselben Namen ein zweites Mal anlegen wollen (409) und den Erfolg verdecken.
+    if (registrationPending) return;
+    registrationPending = true;
+    document.getElementById('rg-submit').disabled = true;
     const errEl = document.getElementById('rg-error');
     errEl.textContent = '';
     const username = document.getElementById('rg-user').value.trim();
@@ -988,6 +995,9 @@ function viewRegister() {
     } catch (err) {
       if (!isCurrentView(navigation) || !isLatest()) return;
       errEl.textContent = err.message || 'Registrierung fehlgeschlagen.';
+    } finally {
+      registrationPending = false;
+      finishPending('rg-submit');
     }
   });
 }
@@ -1126,7 +1136,8 @@ async function viewSettings() {
     // Historie & Statistik laden
     try {
       const { games, stats } = await api.history();
-      if (!isCurrentView(navigation) || session !== getSession()) return;
+      // Gehört zur noch offenen Seite und ihrem Formular, auch wenn ein anderer Tab das Token erneuert hat.
+      if (!isCurrentView(navigation)) return;
       const statHTML = stats.length
         ? `<div class="stats-row">${stats
             .map(

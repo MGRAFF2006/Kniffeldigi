@@ -755,16 +755,27 @@ test('only the newest submission of a sign-in form redirects, greets or shows an
     assert.equal(f.elements.get('lg-error').textContent, 'Falsches Passwort', 'the newer failure is visible');
   }
   {
+    // A registration cannot be resubmitted while pending: a retry would collide with the account the
+    // first request is creating (409) and report failure for a successful registration.
     const f = fixture();
     f.navigate('#/register');
     const first = f.click('reg-form', 'submit');
     const firstResponse = f.take();
-    const second = f.click('reg-form', 'submit');
-    f.take().resolve({ error: 'newer error' }, 400);
-    await second;
-    firstResponse.resolve({ error: 'older error' }, 400);
+    assert.equal(f.elements.get('rg-submit').disabled, true);
+    await f.click('reg-form', 'submit');
+    assert.equal(f.pending.length, 0, 'no second registration request');
+    firstResponse.resolve({ token: 'session-new', user: { username: 'neu', displayName: 'Neu' } }, 201);
     await first;
-    assert.equal(f.elements.get('rg-error').textContent, 'newer error');
+    assert.equal(f.location.hash, '#/');
+    assert.equal(f.probe.getSession(), 'session-new');
+    assert.deepEqual(f.notices.map(([message]) => message), ['Willkommen, Neu! Dein Konto ist bereit.']);
+    // A failure unlocks the form and shows its error.
+    f.navigate('#/register');
+    const retry = f.click('reg-form', 'submit');
+    f.take().resolve({ error: 'Dieser Benutzername ist schon vergeben.' }, 409);
+    await retry;
+    assert.equal(f.elements.get('rg-submit').disabled, false);
+    assert.equal(f.elements.get('rg-error').textContent, 'Dieser Benutzername ist schon vergeben.');
   }
 });
 
@@ -877,6 +888,19 @@ test('another tab\'s sign-in keeps open settings and their draft; a stale form s
       assert.equal(f.pending.length, 0, 'no profile save was sent');
     }
   }
+});
+
+test('settings history still renders after another tab renews the same account\'s token', async () => {
+  const storage = new Map();
+  const f = fixture({ storage });
+  f.probe.setSession('session-alice', { username: 'alice', displayName: 'Alice' });
+  f.navigate('#/settings');
+  const history = f.take();
+  storage.set('wb_session', 'session-alice-2');
+  f.storageEvent('wb_session');
+  history.resolve({ games: [{ game_code: 'AAAAA', mode: 'kniffel', score: 23, placement: 1, player_count: 2, finished_at: 0 }], stats: [] });
+  await f.flush();
+  assert.match(f.elements.get('history-area').innerHTML, /class="score">23</);
 });
 
 test('an expired session found after leaving settings still signs out', async () => {
