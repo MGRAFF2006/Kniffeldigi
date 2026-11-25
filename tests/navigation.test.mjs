@@ -842,34 +842,40 @@ test('a name saved in another tab updates the navbar without rebuilding open set
   response.resolve({ error: 'Das aktuelle Passwort ist falsch.' }, 401);
   await change;
   assert.equal(f.elements.get('st-error').textContent, 'Das aktuelle Passwort ist falsch.');
-  // A different session from another tab still rebuilds settings for the new account.
-  storage.set('wb_session', 'other-session');
-  f.storageEvent('wb_session');
-  assert.equal(f.take().url, '/api/history');
 });
 
-test('an account switch in another tab shows one account in open settings, in either event order', async () => {
-  // Tab 2 signs in as Bob while tab 1 shows Alice's settings. Like Chromium, tab 1 sees the other tab's
-  // two writes one at a time, each followed by its own storage event.
-  const bob = { wb_session: 'session-bob', wb_user: JSON.stringify({ username: 'bob', displayName: 'Bob' }) };
-  for (const order of [['wb_session', 'wb_user'], ['wb_user', 'wb_session']]) {
-    const storage = new Map();
-    const f = fixture({ storage });
-    f.probe.setSession('session-alice', { username: 'alice', displayName: 'Alice' });
-    f.navigate('#/settings');
-    f.take().resolve({ games: [], stats: [] });
-    await f.flush();
-    for (const key of order) {
-      storage.set(key, bob[key]);
-      f.storageEvent(key);
+test('another tab\'s sign-in keeps open settings and their draft; a stale form saves nothing', async () => {
+  // Like Chromium, this tab sees the other tab's two writes one at a time, each with its own event.
+  // Same account with a new token, or a different account: only the navbar follows, as on main the open
+  // form keeps its draft. Submitting that form sends nothing and shows settings for the current account.
+  for (const next of [
+    { wb_session: 'session-alice-2', wb_user: JSON.stringify({ username: 'alice', displayName: 'Alice' }) },
+    { wb_session: 'session-bob', wb_user: JSON.stringify({ username: 'bob', displayName: 'Bob' }) },
+  ]) {
+    for (const order of [['wb_session', 'wb_user'], ['wb_user', 'wb_session']]) {
+      const storage = new Map();
+      const f = fixture({ storage });
+      f.probe.setSession('session-alice', { username: 'alice', displayName: 'Alice' });
+      f.navigate('#/settings');
+      f.take().resolve({ games: [], stats: [] });
+      await f.flush();
+      const form = f.elements.get('app').innerHTML;
+      f.elements.get('st-display').value = 'Entwurf';
+      for (const key of order) {
+        storage.set(key, next[key]);
+        f.storageEvent(key);
+      }
+      const displayName = JSON.parse(next.wb_user).displayName;
+      assert.match(f.elements.get('topnav').innerHTML, new RegExp(`>${displayName}<`));
+      assert.equal(f.pending.length, 0, 'settings were not reloaded');
+      assert.equal(f.elements.get('app').innerHTML, form);
+      assert.equal(f.elements.get('st-display').value, 'Entwurf');
+      f.click('profile-form', 'submit');
+      const history = f.take();
+      assert.equal(history.url, '/api/history', 'the stale form re-rendered instead of saving');
+      assert.equal(history.options.headers.Authorization, `Bearer ${next.wb_session}`);
+      assert.equal(f.pending.length, 0, 'no profile save was sent');
     }
-    const html = f.elements.get('app').innerHTML;
-    assert.match(html, /@bob/);
-    assert.doesNotMatch(html, /@alice/);
-    assert.match(f.elements.get('topnav').innerHTML, />Bob</);
-    const history = f.pending.at(-1);
-    assert.equal(history.url, '/api/history');
-    assert.equal(history.options.headers.Authorization, 'Bearer session-bob');
   }
 });
 
